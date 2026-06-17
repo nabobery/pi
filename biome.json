@@ -27,6 +27,8 @@
 		"includes": [
 			"packages/*/src/**/*.ts",
 			"packages/*/test/**/*.ts",
+			"!packages/gui/src/**/*",
+			"!packages/gui/test/**/*",
 			"packages/coding-agent/examples/**/*.ts",
 			"!**/node_modules/**/*",
 			"!**/test-sessions.ts",
