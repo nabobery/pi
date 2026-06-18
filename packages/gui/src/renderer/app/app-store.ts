@@ -1,5 +1,9 @@
 import { useSyncExternalStore } from "react";
 import {
+	ExtensionUiRespond,
+	ExtensionUiUpdateEditorText,
+	type ExtensionUiRequestSnapshot,
+	type ExtensionUiStateSnapshot,
 	SessionArchive,
 	type SessionCatalogSnapshot,
 	SessionCancelRun,
@@ -10,9 +14,21 @@ import {
 	SessionOpen,
 	SessionRename,
 	SessionSendMessage,
+	SessionSetModel,
+	SessionSetThinkingLevel,
 	SessionUnarchive,
 	type SessionSnapshot,
+	SettingsGetSummary,
+	SettingsOpenGlobalFile,
+	SettingsOpenProjectFile,
+	SettingsRevealGlobalFile,
+	SettingsRevealProjectFile,
+	type SettingsSummarySnapshot,
+	type ModelThinkingSnapshot,
+	type ThinkingLevel,
 	type TimelineSnapshot,
+	TrustGetStatus,
+	type TrustStatusSnapshot,
 	type WorkspaceCatalogSnapshot,
 	InternalIpcError,
 	WorkspacePickDirectory,
@@ -20,8 +36,11 @@ import {
 	WorkspaceSync,
 	decodeGuiCommandResult,
 	decodeGuiEvent,
+	decodeModelThinkingSnapshot,
 	decodeSessionCatalogSnapshot,
+	decodeSettingsSummarySnapshot,
 	decodeTimelineSnapshot,
+	decodeTrustStatusSnapshot,
 	decodeWorkspaceCatalogSnapshot,
 	type GuiCommand,
 	type GuiCommandResult,
@@ -45,8 +64,20 @@ export interface CatalogViewState {
 	sessionCatalogs: Readonly<Record<string, SessionCatalogSnapshot>>;
 	timelines: Readonly<Record<string, TimelineSnapshot>>;
 	composerDrafts: Readonly<Record<string, string>>;
+	modelThinkingBySessionKey: Readonly<Record<string, ModelThinkingSnapshot>>;
+	settingsSummaryByWorkspaceId: Readonly<Record<string, SettingsSummarySnapshot>>;
+	trustStatusByWorkspaceId: Readonly<Record<string, TrustStatusSnapshot>>;
+	extensionUiBySessionKey: Readonly<Record<string, ExtensionUiSessionState>>;
 	error: string | undefined;
 	pending: boolean;
+}
+
+export interface ExtensionUiSessionState {
+	requests: readonly ExtensionUiRequestSnapshot[];
+	notifications: readonly ExtensionUiStateSnapshot[];
+	statuses: Readonly<Record<string, string>>;
+	title: string | undefined;
+	compatibilityIssues: readonly string[];
 }
 
 export interface GuiCatalogStore {
@@ -55,9 +86,24 @@ export interface GuiCatalogStore {
 	closeSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	createSession(workspaceId: WorkspaceId): Promise<void>;
 	getSnapshot(): CatalogViewState;
+	getSettingsSummary(workspaceId: WorkspaceId): Promise<void>;
+	getTrustStatus(workspaceId: WorkspaceId): Promise<void>;
 	getTranscript(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	openSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
+	openSettingsFile(workspaceId: WorkspaceId, scope: "global" | "project"): Promise<void>;
 	pickWorkspaceDirectory(): Promise<void>;
+	respondToExtensionUi(
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		request: ExtensionUiRequestSnapshot,
+		response:
+			| { kind: "confirm"; confirmed: boolean }
+			| { kind: "input"; value?: string; cancelled: boolean }
+			| { kind: "select"; value?: string; cancelled: boolean }
+			| { kind: "editor"; value?: string; cancelled: boolean }
+			| { kind: "getEditorText"; value: string },
+	): Promise<void>;
+	revealSettingsFile(workspaceId: WorkspaceId, scope: "global" | "project"): Promise<void>;
 	renameSession(workspaceId: WorkspaceId, sessionId: SessionId, title: string): Promise<void>;
 	selectWorkspace(workspaceId: WorkspaceId): Promise<void>;
 	sendMessage(
@@ -67,6 +113,8 @@ export interface GuiCatalogStore {
 		deliveryMode?: "steer" | "followUp",
 	): Promise<boolean>;
 	setComposerDraft(workspaceId: WorkspaceId, sessionId: SessionId, value: string): void;
+	setModel(workspaceId: WorkspaceId, sessionId: SessionId, provider: string, modelId: string): Promise<void>;
+	setThinkingLevel(workspaceId: WorkspaceId, sessionId: SessionId, thinkingLevel: ThinkingLevel): Promise<void>;
 	subscribe(listener: () => void): () => void;
 	syncWorkspace(workspaceId: WorkspaceId): Promise<void>;
 	unarchiveSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
@@ -88,6 +136,10 @@ export function createGuiCatalogStore(
 		sessionCatalogs: {},
 		timelines: {},
 		composerDrafts: {},
+		modelThinkingBySessionKey: {},
+		settingsSummaryByWorkspaceId: {},
+		trustStatusByWorkspaceId: {},
+		extensionUiBySessionKey: {},
 		error: options.initialError,
 		pending: false,
 	};
@@ -132,14 +184,40 @@ export function createGuiCatalogStore(
 		createSession: (workspaceId) =>
 			invokeVoid(new SessionCreate({ requestId: nextRequestId("session.create"), workspaceId })),
 		getSnapshot: () => state,
+		getSettingsSummary: (workspaceId) =>
+			invokeVoid(new SettingsGetSummary({ requestId: nextRequestId("settings.getSummary"), workspaceId })),
+		getTrustStatus: (workspaceId) =>
+			invokeVoid(new TrustGetStatus({ requestId: nextRequestId("trust.getStatus"), workspaceId })),
 		getTranscript: (workspaceId, sessionId) =>
 			invokeVoid(
 				new SessionGetTranscript({ requestId: nextRequestId("session.getTranscript"), workspaceId, sessionId }),
 			),
 		openSession: (workspaceId, sessionId) =>
 			invokeVoid(new SessionOpen({ requestId: nextRequestId("session.open"), workspaceId, sessionId })),
+		openSettingsFile: (workspaceId, scope) =>
+			invokeVoid(
+				scope === "global"
+					? new SettingsOpenGlobalFile({ requestId: nextRequestId("settings.openGlobalFile"), workspaceId })
+					: new SettingsOpenProjectFile({ requestId: nextRequestId("settings.openProjectFile"), workspaceId }),
+			),
 		pickWorkspaceDirectory: () =>
 			invokeVoid(new WorkspacePickDirectory({ requestId: nextRequestId("workspace.pickDirectory") })),
+		respondToExtensionUi: (workspaceId, sessionId, request, response) =>
+			invokeVoid(
+				new ExtensionUiRespond({
+					requestId: nextRequestId("extensionUi.respond"),
+					workspaceId,
+					sessionId,
+					extensionUiRequestId: request.id,
+					response,
+				}),
+			),
+		revealSettingsFile: (workspaceId, scope) =>
+			invokeVoid(
+				scope === "global"
+					? new SettingsRevealGlobalFile({ requestId: nextRequestId("settings.revealGlobalFile"), workspaceId })
+					: new SettingsRevealProjectFile({ requestId: nextRequestId("settings.revealProjectFile"), workspaceId }),
+			),
 		renameSession: (workspaceId, sessionId, title) =>
 			invokeVoid(new SessionRename({ requestId: nextRequestId("session.rename"), workspaceId, sessionId, title })),
 		selectWorkspace: (workspaceId) =>
@@ -162,7 +240,27 @@ export function createGuiCatalogStore(
 					[timelineKey(workspaceId, sessionId)]: value,
 				},
 			});
+			void updateExtensionEditorText(workspaceId, sessionId, value);
 		},
+		setModel: (workspaceId, sessionId, provider, modelId) =>
+			invokeVoid(
+				new SessionSetModel({
+					requestId: nextRequestId("session.setModel"),
+					workspaceId,
+					sessionId,
+					provider,
+					modelId,
+				}),
+			),
+		setThinkingLevel: (workspaceId, sessionId, thinkingLevel) =>
+			invokeVoid(
+				new SessionSetThinkingLevel({
+					requestId: nextRequestId("session.setThinkingLevel"),
+					workspaceId,
+					sessionId,
+					thinkingLevel,
+				}),
+			),
 		subscribe: (listener) => {
 			listeners.add(listener);
 			return () => {
@@ -174,6 +272,23 @@ export function createGuiCatalogStore(
 		unarchiveSession: (workspaceId, sessionId) =>
 			invokeVoid(new SessionUnarchive({ requestId: nextRequestId("session.unarchive"), workspaceId, sessionId })),
 	};
+
+	async function updateExtensionEditorText(
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		text: string,
+	): Promise<void> {
+		const result = await api.invoke(
+			new ExtensionUiUpdateEditorText({
+				requestId: nextRequestId("extensionUi.updateEditorText"),
+				workspaceId,
+				sessionId,
+				text,
+			}),
+		);
+		if (result.ok) return;
+		setState({ ...state, error: result.error.message });
+	}
 }
 
 export function createValidatedRendererCatalogApi(api: RendererCatalogTransport): RendererCatalogApi {
@@ -248,7 +363,9 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 		const key = timelineKey(event.workspaceId, event.sessionId);
 		const previous = state.sessionCatalogs[event.workspaceId];
 		const { [key]: _closedTimeline, ...timelines } = state.timelines;
-		if (!previous) return { ...state, timelines };
+		const { [key]: _closedModelThinking, ...modelThinkingBySessionKey } = state.modelThinkingBySessionKey;
+		const { [key]: _closedExtensionUi, ...extensionUiBySessionKey } = state.extensionUiBySessionKey;
+		if (!previous) return { ...state, timelines, modelThinkingBySessionKey, extensionUiBySessionKey };
 		const sessions: SessionSnapshot[] = [];
 		for (const session of previous.sessions) {
 			sessions.push(session.id === event.sessionId ? { ...session, status: "closed" } : session);
@@ -256,6 +373,8 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 		return {
 			...state,
 			timelines,
+			modelThinkingBySessionKey,
+			extensionUiBySessionKey,
 			sessionCatalogs: {
 				...state.sessionCatalogs,
 				[event.workspaceId]: {
@@ -316,6 +435,81 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 	if (event._tag === "run.cancelled") {
 		return setSessionStatus(state, event.workspaceId, event.sessionId, "ready");
 	}
+	if (event._tag === "modelThinking.updated") {
+		return {
+			...state,
+			modelThinkingBySessionKey: {
+				...state.modelThinkingBySessionKey,
+				[timelineKey(event.snapshot.workspaceId, event.snapshot.sessionId)]: event.snapshot,
+			},
+		};
+	}
+	if (event._tag === "settings.summaryUpdated") {
+		return {
+			...state,
+			settingsSummaryByWorkspaceId: {
+				...state.settingsSummaryByWorkspaceId,
+				[event.summary.workspaceId]: event.summary,
+			},
+		};
+	}
+	if (event._tag === "trust.statusUpdated") {
+		return {
+			...state,
+			trustStatusByWorkspaceId: {
+				...state.trustStatusByWorkspaceId,
+				[event.status.workspaceId]: event.status,
+			},
+		};
+	}
+	if (event._tag === "extensionUi.requested") {
+		return upsertExtensionUiState(state, event.request.workspaceId, event.request.sessionId, (previous) => ({
+			...previous,
+			requests: [...previous.requests, event.request],
+		}));
+	}
+	if (event._tag === "extensionUi.resolved") {
+		return upsertExtensionUiState(state, event.workspaceId, event.sessionId, (previous) => ({
+			...previous,
+			requests: previous.requests.filter((request) => request.id !== event.extensionUiRequestId),
+		}));
+	}
+	if (event._tag === "extensionUi.updated") {
+		const update = event.update;
+		if (update.kind === "editorText" && update.editorText !== undefined) {
+			state = {
+				...state,
+				composerDrafts: {
+					...state.composerDrafts,
+					[timelineKey(update.workspaceId, update.sessionId)]: update.editorText,
+				},
+			};
+		}
+		return upsertExtensionUiState(state, update.workspaceId, update.sessionId, (previous) => {
+			if (update.kind === "notify") {
+				return { ...previous, notifications: [...previous.notifications, update].slice(-5) };
+			}
+			if (update.kind === "status" && update.statusKey) {
+				const statuses = { ...previous.statuses };
+				if (update.statusText === undefined) {
+					delete statuses[update.statusKey];
+				} else {
+					statuses[update.statusKey] = update.statusText;
+				}
+				return { ...previous, statuses };
+			}
+			if (update.kind === "title") {
+				return { ...previous, title: update.title };
+			}
+			return previous;
+		});
+	}
+	if (event._tag === "extensionUi.compatibilityIssue") {
+		return upsertExtensionUiState(state, event.workspaceId, event.sessionId, (previous) => ({
+			...previous,
+			compatibilityIssues: [...previous.compatibilityIssues, event.message].slice(-5),
+		}));
+	}
 	return state;
 }
 
@@ -336,6 +530,36 @@ async function applyResult(state: CatalogViewState, data: unknown): Promise<Cata
 			timelines: {
 				...state.timelines,
 				[timelineKey(timeline.workspaceId, timeline.sessionId)]: timeline,
+			},
+		};
+	}
+	const modelThinking = await decodeModelThinking(data);
+	if (modelThinking) {
+		return {
+			...state,
+			modelThinkingBySessionKey: {
+				...state.modelThinkingBySessionKey,
+				[timelineKey(modelThinking.workspaceId, modelThinking.sessionId)]: modelThinking,
+			},
+		};
+	}
+	const settingsSummary = await decodeSettingsSummary(data);
+	if (settingsSummary) {
+		return {
+			...state,
+			settingsSummaryByWorkspaceId: {
+				...state.settingsSummaryByWorkspaceId,
+				[settingsSummary.workspaceId]: settingsSummary,
+			},
+		};
+	}
+	const trustStatus = await decodeTrustStatus(data);
+	if (trustStatus) {
+		return {
+			...state,
+			trustStatusByWorkspaceId: {
+				...state.trustStatusByWorkspaceId,
+				[trustStatus.workspaceId]: trustStatus,
 			},
 		};
 	}
@@ -361,6 +585,30 @@ async function decodeSessionCatalog(data: unknown): Promise<SessionCatalogSnapsh
 async function decodeTimeline(data: unknown): Promise<TimelineSnapshot | undefined> {
 	try {
 		return await decodeTimelineSnapshot(data);
+	} catch {
+		return undefined;
+	}
+}
+
+async function decodeModelThinking(data: unknown): Promise<ModelThinkingSnapshot | undefined> {
+	try {
+		return await decodeModelThinkingSnapshot(data);
+	} catch {
+		return undefined;
+	}
+}
+
+async function decodeSettingsSummary(data: unknown): Promise<SettingsSummarySnapshot | undefined> {
+	try {
+		return await decodeSettingsSummarySnapshot(data);
+	} catch {
+		return undefined;
+	}
+}
+
+async function decodeTrustStatus(data: unknown): Promise<TrustStatusSnapshot | undefined> {
+	try {
+		return await decodeTrustStatusSnapshot(data);
 	} catch {
 		return undefined;
 	}
@@ -494,6 +742,33 @@ function setTimeline(state: CatalogViewState, timeline: TimelineSnapshot): Catal
 			...state.timelines,
 			[timelineKey(timeline.workspaceId, timeline.sessionId)]: timeline,
 		},
+	};
+}
+
+function upsertExtensionUiState(
+	state: CatalogViewState,
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	update: (previous: ExtensionUiSessionState) => ExtensionUiSessionState,
+): CatalogViewState {
+	const key = timelineKey(workspaceId, sessionId);
+	const previous = state.extensionUiBySessionKey[key] ?? emptyExtensionUiSessionState();
+	return {
+		...state,
+		extensionUiBySessionKey: {
+			...state.extensionUiBySessionKey,
+			[key]: update(previous),
+		},
+	};
+}
+
+function emptyExtensionUiSessionState(): ExtensionUiSessionState {
+	return {
+		requests: [],
+		notifications: [],
+		statuses: {},
+		title: undefined,
+		compatibilityIssues: [],
 	};
 }
 

@@ -1,5 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
 import {
+	ExtensionUiRequested,
+	ExtensionUiResolved,
+	ExtensionUiUpdated,
+	ExtensionUiUpdateEditorText,
 	SessionCatalogUpdated,
 	RunCancelled,
 	RunCompleted,
@@ -22,6 +26,7 @@ import {
 	WorkspaceCatalogUpdated,
 	catalogRevisionFromString,
 	eventIdFromString,
+	extensionUiRequestIdFromString,
 	requestIdFromString,
 	runIdFromString,
 	sessionIdFromString,
@@ -269,7 +274,10 @@ describe("createGuiCatalogStore", () => {
 		});
 		expect(invoke).toHaveBeenCalledWith(expect.any(SessionSendMessage));
 		expect(invoke).toHaveBeenCalledWith(expect.any(SessionCancelRun));
-		expect(invoke.mock.calls[0]?.[0]).toMatchObject({
+		const sendCommand = invoke.mock.calls
+			.map((call) => call[0])
+			.find((command) => command._tag === "session.sendMessage");
+		expect(sendCommand).toMatchObject({
 			_tag: "session.sendMessage",
 			workspaceId: workspaceA,
 			sessionId,
@@ -566,6 +574,92 @@ describe("createGuiCatalogStore", () => {
 		);
 
 		expect(store.getSnapshot().error).toBe("Failed to parse GUI catalog");
+	});
+
+	test("mirrors composer drafts to main for synchronous extension getEditorText", () => {
+		const invoke = vi.fn().mockResolvedValue({
+			ok: true,
+			requestId: requestIdFromString("request-1"),
+			data: undefined,
+		});
+		const store = createGuiCatalogStore(
+			{
+				invoke,
+				subscribe: () => () => undefined,
+			},
+			{ revision: catalogRevisionFromString("0"), workspaces: [] },
+		);
+
+		store.setComposerDraft(workspaceIdFromString("workspace-1"), sessionIdFromString("session-1"), "draft text");
+
+		expect(invoke).toHaveBeenCalledWith(expect.any(ExtensionUiUpdateEditorText));
+		expect(invoke.mock.calls[0]?.[0]).toMatchObject({
+			_tag: "extensionUi.updateEditorText",
+			workspaceId: "workspace-1",
+			sessionId: "session-1",
+			text: "draft text",
+		});
+	});
+
+	test("applies extension UI request, editor text update, and resolution state immutably", () => {
+		const listeners: Array<(event: GuiEvent) => void> = [];
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const requestId = extensionUiRequestIdFromString("extension-ui-1");
+		const store = createGuiCatalogStore(
+			{
+				invoke: vi.fn(),
+				subscribe: (listener) => {
+					listeners.push(listener);
+					return () => undefined;
+				},
+			},
+			{ revision: catalogRevisionFromString("0"), workspaces: [] },
+		);
+		const initialSnapshot = store.getSnapshot();
+
+		listeners[0](
+			new ExtensionUiRequested({
+				eventId: eventIdFromString("event-1"),
+				sequence: 1,
+				request: {
+					id: requestId,
+					workspaceId,
+					sessionId,
+					kind: "input",
+					title: "Name",
+				},
+			}),
+		);
+		listeners[0](
+			new ExtensionUiUpdated({
+				eventId: eventIdFromString("event-2"),
+				sequence: 2,
+				update: {
+					workspaceId,
+					sessionId,
+					kind: "editorText",
+					editorText: "from extension",
+				},
+			}),
+		);
+
+		const withRequest = store.getSnapshot();
+		expect(withRequest).not.toBe(initialSnapshot);
+		expect(withRequest.extensionUiBySessionKey["workspace-1:session-1"].requests).toHaveLength(1);
+		expect(withRequest.composerDrafts["workspace-1:session-1"]).toBe("from extension");
+
+		listeners[0](
+			new ExtensionUiResolved({
+				eventId: eventIdFromString("event-3"),
+				sequence: 3,
+				workspaceId,
+				sessionId,
+				extensionUiRequestId: requestId,
+			}),
+		);
+
+		expect(store.getSnapshot().extensionUiBySessionKey["workspace-1:session-1"].requests).toHaveLength(0);
 	});
 
 	test("validates invoke results before applying renderer state", async () => {

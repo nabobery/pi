@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import {
 	AppBootstrap,
+	ExtensionUiUpdateEditorText,
 	SessionArchive,
 	type SessionCatalogSnapshot,
 	SessionCancelRun,
@@ -170,6 +171,7 @@ describe("createGuiInvokeHandler", () => {
 			cancelRun: vi.fn(async () => undefined),
 			closeSession: vi.fn(async () => undefined),
 			createSession: vi.fn(async () => sessions),
+			getModelThinking: vi.fn(),
 			getTranscript: vi.fn(
 				async (): Promise<TimelineSnapshot> => ({
 					workspaceId,
@@ -178,7 +180,11 @@ describe("createGuiInvokeHandler", () => {
 				}),
 			),
 			openSession: vi.fn(async () => sessions),
+			respondToExtensionUi: vi.fn(),
 			sendMessage: vi.fn(async () => undefined),
+			setModel: vi.fn(),
+			setThinkingLevel: vi.fn(),
+			updateExtensionEditorText: vi.fn(),
 		};
 		const eventBus = new RendererEventBus();
 		const handler = createGuiInvokeHandler({
@@ -214,6 +220,68 @@ describe("createGuiInvokeHandler", () => {
 		expect(sessionSupervisor.closeSession).toHaveBeenCalledWith(workspaceId, sessionId);
 	});
 
+	test("emits app.error when session runtime context preload fails", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const sessions: SessionCatalogSnapshot = {
+			workspaceId,
+			selectedSessionId: sessionId,
+			sessions: [
+				{
+					id: sessionId,
+					workspaceId,
+					title: "Session",
+					status: "ready",
+					updatedAt: "2026-06-18T00:00:00.000Z",
+					preview: "",
+					messageCount: 1,
+					sessionFilePath: "/tmp/session.jsonl",
+				},
+			],
+		};
+		const sender = createSender();
+		const handler = createGuiInvokeHandler({
+			app,
+			eventBus: new RendererEventBus(),
+			mode: "test",
+			policy,
+			sessionSupervisor: {
+				cancelRun: vi.fn(async () => undefined),
+				closeSession: vi.fn(async () => undefined),
+				createSession: vi.fn(async () => sessions),
+				getModelThinking: vi.fn(),
+				getTranscript: vi.fn(),
+				openSession: vi.fn(async () => sessions),
+				respondToExtensionUi: vi.fn(),
+				sendMessage: vi.fn(async () => undefined),
+				setModel: vi.fn(),
+				setThinkingLevel: vi.fn(),
+				updateExtensionEditorText: vi.fn(),
+			},
+			settingsBridgeService: {
+				getSummary: vi.fn(async () => {
+					throw new Error("settings unavailable");
+				}),
+				getTrustStatus: vi.fn(),
+				openSettingsFile: vi.fn(),
+				revealSettingsFile: vi.fn(),
+			},
+		});
+
+		const result = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new SessionCreate({ requestId: requestIdFromString("request-1"), workspaceId }),
+		);
+
+		expect(result).toMatchObject({ ok: true });
+		expect(sender.send.mock.calls.map((call) => call[1])).toContainEqual(
+			expect.objectContaining({
+				_tag: "app.error",
+				error: expect.objectContaining({ message: "Unhandled GUI IPC error", cause: "settings unavailable" }),
+			}),
+		);
+	});
+
 	test("routes prompt commands through the supervisor without generic preflight receipts", async () => {
 		const workspaceId = workspaceIdFromString("workspace-1");
 		const sessionId = sessionIdFromString("session-1");
@@ -221,9 +289,14 @@ describe("createGuiInvokeHandler", () => {
 			cancelRun: vi.fn(async () => undefined),
 			closeSession: vi.fn(async () => undefined),
 			createSession: vi.fn(),
+			getModelThinking: vi.fn(),
 			getTranscript: vi.fn(),
 			openSession: vi.fn(),
+			respondToExtensionUi: vi.fn(),
 			sendMessage: vi.fn(async () => undefined),
+			setModel: vi.fn(),
+			setThinkingLevel: vi.fn(),
+			updateExtensionEditorText: vi.fn(),
 		};
 		const eventBus = new RendererEventBus();
 		const handler = createGuiInvokeHandler({
@@ -266,9 +339,14 @@ describe("createGuiInvokeHandler", () => {
 			cancelRun: vi.fn(async () => undefined),
 			closeSession: vi.fn(async () => undefined),
 			createSession: vi.fn(),
+			getModelThinking: vi.fn(),
 			getTranscript: vi.fn(),
 			openSession: vi.fn(),
+			respondToExtensionUi: vi.fn(),
 			sendMessage: vi.fn(async () => undefined),
+			setModel: vi.fn(),
+			setThinkingLevel: vi.fn(),
+			updateExtensionEditorText: vi.fn(),
 		};
 		const eventBus = new RendererEventBus();
 		const handler = createGuiInvokeHandler({
@@ -290,6 +368,44 @@ describe("createGuiInvokeHandler", () => {
 
 		expect(result).toEqual({ ok: true, requestId: "request-1", data: undefined });
 		expect(sessionSupervisor.cancelRun).toHaveBeenCalledWith(workspaceId, sessionId);
+	});
+
+	test("routes extension editor text mirror updates through the supervisor", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const sessionSupervisor = {
+			cancelRun: vi.fn(async () => undefined),
+			closeSession: vi.fn(async () => undefined),
+			createSession: vi.fn(),
+			getModelThinking: vi.fn(),
+			getTranscript: vi.fn(),
+			openSession: vi.fn(),
+			respondToExtensionUi: vi.fn(),
+			sendMessage: vi.fn(async () => undefined),
+			setModel: vi.fn(),
+			setThinkingLevel: vi.fn(),
+			updateExtensionEditorText: vi.fn(),
+		};
+		const handler = createGuiInvokeHandler({
+			app,
+			eventBus: new RendererEventBus(),
+			mode: "test",
+			policy,
+			sessionSupervisor,
+		});
+
+		const result = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender: createSender() },
+			new ExtensionUiUpdateEditorText({
+				requestId: requestIdFromString("request-1"),
+				workspaceId,
+				sessionId,
+				text: "draft",
+			}),
+		);
+
+		expect(result).toEqual({ ok: true, requestId: "request-1", data: undefined });
+		expect(sessionSupervisor.updateExtensionEditorText).toHaveBeenCalledWith(workspaceId, sessionId, "draft");
 	});
 
 	test("automatically emits bootstrap receipt events to trusted renderer senders", async () => {

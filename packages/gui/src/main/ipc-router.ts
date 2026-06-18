@@ -1,7 +1,10 @@
-import { type App, dialog, type IpcMainInvokeEvent, ipcMain, type WebContents } from "electron";
+import { type App, dialog, type IpcMainInvokeEvent, ipcMain, shell, type WebContents } from "electron";
 import {
 	AppBootstrap,
+	AppError,
 	CommandNotImplemented,
+	ExtensionUiRespond,
+	ExtensionUiUpdateEditorText,
 	type GuiCommand,
 	type GuiCommandResult,
 	type GuiError,
@@ -9,6 +12,12 @@ import {
 	InvalidRendererCommand,
 	InternalIpcError,
 	ReceiptEmitted,
+	SettingsGetSummary,
+	SettingsOpenGlobalFile,
+	SettingsOpenProjectFile,
+	SettingsRevealGlobalFile,
+	SettingsRevealProjectFile,
+	SettingsSummaryUpdated,
 	SessionArchive,
 	SessionCancelRun,
 	SessionClose,
@@ -18,8 +27,12 @@ import {
 	SessionOpen,
 	SessionRename,
 	SessionSendMessage,
+	SessionSetModel,
+	SessionSetThinkingLevel,
 	SessionSelected,
 	SessionUnarchive,
+	TrustGetStatus,
+	TrustStatusUpdated,
 	UnauthorizedIpcSender,
 	WorkspaceAdd,
 	WorkspaceCatalogUpdated,
@@ -38,6 +51,8 @@ import type { AppOriginPolicy } from "./app-origin-policy.ts";
 import { createAppInfo } from "./app-info.ts";
 import { isAllowedAppUrl } from "./app-origin-policy.ts";
 import { CatalogService } from "./catalog/catalog-service.ts";
+import { SettingsBridgeService } from "./settings/settings-bridge-service.ts";
+import { ExtensionHostUiService } from "./session/extension-host-ui-service.ts";
 import { PiSdkSessionDriver } from "./session/pi-sdk-session-driver.ts";
 import { RuntimeSupervisor } from "./session/runtime-supervisor.ts";
 import { SessionSupervisor } from "./session/session-supervisor.ts";
@@ -54,9 +69,23 @@ export interface CreateGuiInvokeHandlerOptions {
 	mode: string | undefined;
 	pickWorkspaceDirectory?: () => Promise<string | undefined>;
 	policy: AppOriginPolicy;
+	settingsBridgeService?: Pick<
+		SettingsBridgeService,
+		"getSummary" | "getTrustStatus" | "openSettingsFile" | "revealSettingsFile"
+	>;
 	sessionSupervisor?: Pick<
 		SessionSupervisor,
-		"cancelRun" | "closeSession" | "createSession" | "getTranscript" | "openSession" | "sendMessage"
+		| "cancelRun"
+		| "closeSession"
+		| "createSession"
+		| "getModelThinking"
+		| "getTranscript"
+		| "openSession"
+		| "respondToExtensionUi"
+		| "sendMessage"
+		| "setModel"
+		| "setThinkingLevel"
+		| "updateExtensionEditorText"
 	>;
 }
 
@@ -120,11 +149,17 @@ export function createGuiInvokeHandler(options: CreateGuiInvokeHandlerOptions) {
 export function registerGuiIpcHandlers(app: App, mode: string | undefined, policy: AppOriginPolicy): RendererEventBus {
 	const eventBus = new RendererEventBus();
 	const catalogService = new CatalogService();
-	const runtimeSupervisor = new RuntimeSupervisor();
+	const extensionHostUiService = new ExtensionHostUiService(eventBus);
+	const runtimeSupervisor = new RuntimeSupervisor({
+		createExtensionUiContext: (workspaceId, sessionId) =>
+			extensionHostUiService.createContext(workspaceId, sessionId),
+	});
+	const settingsBridgeService = new SettingsBridgeService({ catalogService, shell });
 	const sessionSupervisor = new SessionSupervisor({
 		catalogService,
 		driver: new PiSdkSessionDriver({ runtimeSupervisor }),
 		eventBus,
+		extensionHostUiService,
 	});
 	const handler = createGuiInvokeHandler({
 		app,
@@ -136,6 +171,7 @@ export function registerGuiIpcHandlers(app: App, mode: string | undefined, polic
 			return result.canceled ? undefined : result.filePaths[0];
 		},
 		policy,
+		settingsBridgeService,
 		sessionSupervisor,
 	});
 
@@ -160,6 +196,7 @@ async function handleGuiCommand(
 	options: CreateGuiInvokeHandlerOptions,
 ): Promise<GuiCommandResult> {
 	const catalogService = options.catalogService ?? new CatalogService();
+	const settingsBridgeService = options.settingsBridgeService ?? new SettingsBridgeService({ catalogService, shell });
 
 	if (command instanceof AppBootstrap) {
 		options.eventBus.publishReceipt(command.requestId, "app.bootstrap.accepted");
@@ -229,6 +266,7 @@ async function handleGuiCommand(
 				: await catalogService.createSession(command.workspaceId);
 			publishSessionCatalog(options.eventBus, sessions);
 			publishSelectedSession(options.eventBus, sessions);
+			await publishWorkspaceRuntimeContext(options.eventBus, settingsBridgeService, command.workspaceId);
 			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
 			return { ok: true, requestId: command.requestId, data: sessions };
 		}
@@ -239,6 +277,7 @@ async function handleGuiCommand(
 				: await catalogService.openSession(command.workspaceId, command.sessionId);
 			publishSessionCatalog(options.eventBus, sessions);
 			publishSelectedSession(options.eventBus, sessions);
+			await publishWorkspaceRuntimeContext(options.eventBus, settingsBridgeService, command.workspaceId);
 			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
 			return { ok: true, requestId: command.requestId, data: sessions };
 		}
@@ -271,6 +310,82 @@ async function handleGuiCommand(
 			await options.sessionSupervisor.cancelRun(command.workspaceId, command.sessionId);
 			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
 			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
+		if (command instanceof SessionSetModel && options.sessionSupervisor) {
+			const snapshot = await options.sessionSupervisor.setModel(
+				command.workspaceId,
+				command.sessionId,
+				command.provider,
+				command.modelId,
+			);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: snapshot };
+		}
+
+		if (command instanceof SessionSetThinkingLevel && options.sessionSupervisor) {
+			const snapshot = await options.sessionSupervisor.setThinkingLevel(
+				command.workspaceId,
+				command.sessionId,
+				command.thinkingLevel,
+			);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: snapshot };
+		}
+
+		if (command instanceof ExtensionUiRespond && options.sessionSupervisor) {
+			options.sessionSupervisor.respondToExtensionUi({
+				workspaceId: command.workspaceId,
+				sessionId: command.sessionId,
+				extensionUiRequestId: command.extensionUiRequestId,
+				response: command.response,
+			});
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
+		if (command instanceof ExtensionUiUpdateEditorText && options.sessionSupervisor) {
+			options.sessionSupervisor.updateExtensionEditorText(command.workspaceId, command.sessionId, command.text);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
+		if (command instanceof SettingsGetSummary) {
+			const summary = await settingsBridgeService.getSummary(command.workspaceId);
+			options.eventBus.publish(new SettingsSummaryUpdated({ ...options.eventBus.nextEventBase(), summary }));
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: summary };
+		}
+
+		if (command instanceof SettingsOpenGlobalFile) {
+			await settingsBridgeService.openSettingsFile(command.workspaceId, "global");
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
+		if (command instanceof SettingsRevealGlobalFile) {
+			await settingsBridgeService.revealSettingsFile(command.workspaceId, "global");
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
+		if (command instanceof SettingsOpenProjectFile) {
+			await settingsBridgeService.openSettingsFile(command.workspaceId, "project");
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
+		if (command instanceof SettingsRevealProjectFile) {
+			await settingsBridgeService.revealSettingsFile(command.workspaceId, "project");
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
+		if (command instanceof TrustGetStatus) {
+			const status = await settingsBridgeService.getTrustStatus(command.workspaceId);
+			options.eventBus.publish(new TrustStatusUpdated({ ...options.eventBus.nextEventBase(), status }));
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: status };
 		}
 
 		if (command instanceof SessionRename) {
@@ -399,6 +514,34 @@ async function publishCurrentWorkspaceCatalog(
 		publishWorkspaceCatalog(eventBus, await catalogService.getWorkspaceCatalog());
 	} catch {
 		return;
+	}
+}
+
+async function publishWorkspaceRuntimeContext(
+	eventBus: RendererEventBus,
+	settingsBridgeService: Pick<SettingsBridgeService, "getSummary" | "getTrustStatus">,
+	workspaceId: ConstructorParameters<typeof SettingsSummaryUpdated>[0]["summary"]["workspaceId"],
+): Promise<void> {
+	try {
+		eventBus.publish(
+			new SettingsSummaryUpdated({
+				...eventBus.nextEventBase(),
+				summary: await settingsBridgeService.getSummary(workspaceId),
+			}),
+		);
+		eventBus.publish(
+			new TrustStatusUpdated({
+				...eventBus.nextEventBase(),
+				status: await settingsBridgeService.getTrustStatus(workspaceId),
+			}),
+		);
+	} catch (error) {
+		eventBus.publish(
+			new AppError({
+				...eventBus.nextEventBase(),
+				error: await toGuiError(error),
+			}),
+		);
 	}
 }
 

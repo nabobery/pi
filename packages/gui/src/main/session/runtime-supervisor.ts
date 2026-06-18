@@ -4,7 +4,11 @@ import {
 	createAgentSessionServices,
 	getAgentDir,
 	type AgentSessionEvent,
+	type AgentSessionServices,
+	type ExtensionUIContext,
 	type CreateAgentSessionRuntimeFactory,
+	type Api,
+	type Model,
 	type PromptOptions,
 	type SessionManager,
 } from "@earendil-works/pi-coding-agent/runtime";
@@ -14,6 +18,7 @@ import {
 	sessionIdFromString,
 	type SessionId,
 	type WorkspaceId,
+	type ThinkingLevel,
 } from "../../contracts/index.ts";
 
 export interface RuntimeSessionManager {
@@ -22,17 +27,34 @@ export interface RuntimeSessionManager {
 
 export interface RuntimeAgentSession {
 	abort(): Promise<void>;
-	bindExtensions(bindings: { mode: "rpc"; onError?: (error: unknown) => void }): Promise<void>;
+	bindExtensions(bindings: {
+		mode: "rpc";
+		uiContext?: ExtensionUIContext;
+		onError?: (error: unknown) => void;
+	}): Promise<void>;
+	getAvailableThinkingLevels(): ThinkingLevel[];
+	model?: RuntimeModel;
 	prompt(text: string, options?: PromptOptions): Promise<void>;
 	sessionManager?: RuntimeSessionManager;
+	setModel(model: RuntimeModel): Promise<void>;
+	setThinkingLevel(level: ThinkingLevel): void;
+	supportsThinking(): boolean;
 	subscribe(listener: (event: AgentSessionEvent) => void): () => void;
+	thinkingLevel: ThinkingLevel;
 }
 
 export interface ManagedAgentRuntime {
 	session: RuntimeAgentSession;
+	services?: RuntimeAgentServices;
 	cwd?: string;
 	dispose(): Promise<void>;
 }
+
+export interface RuntimeAgentServices {
+	modelRegistry?: Pick<AgentSessionServices["modelRegistry"], "find" | "getAll" | "hasConfiguredAuth">;
+}
+
+export type RuntimeModel = Model<Api>;
 
 export interface RuntimeCreateRequest {
 	cwd: string;
@@ -52,15 +74,18 @@ export interface RuntimeSupervisorOptions {
 		agentDir: string;
 		sessionManager: RuntimeSessionManager;
 	}) => Promise<ManagedAgentRuntime>;
+	createExtensionUiContext?: (workspaceId: WorkspaceId, sessionId: SessionId) => ExtensionUIContext;
 	getAgentDir?: () => string;
 }
 
 export class RuntimeSupervisor {
 	private readonly createManagedRuntime: NonNullable<RuntimeSupervisorOptions["createRuntime"]>;
+	private readonly createExtensionUiContext: RuntimeSupervisorOptions["createExtensionUiContext"];
 	private readonly resolveAgentDir: NonNullable<RuntimeSupervisorOptions["getAgentDir"]>;
 
 	constructor(options: RuntimeSupervisorOptions = {}) {
 		this.createManagedRuntime = options.createRuntime ?? createDefaultRuntime;
+		this.createExtensionUiContext = options.createExtensionUiContext;
 		this.resolveAgentDir = options.getAgentDir ?? getAgentDir;
 	}
 
@@ -83,8 +108,12 @@ export class RuntimeSupervisor {
 		}
 
 		try {
+			const sessionId = sessionIdFromString(request.sessionManager.getSessionId());
 			await runtime.session.bindExtensions({
 				mode: "rpc",
+				...(request.workspaceId && this.createExtensionUiContext
+					? { uiContext: this.createExtensionUiContext(request.workspaceId, sessionId) }
+					: {}),
 				onError: () => undefined,
 			});
 		} catch (error) {

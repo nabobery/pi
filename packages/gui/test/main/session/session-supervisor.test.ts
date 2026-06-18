@@ -1,12 +1,13 @@
 import { describe, expect, test, vi } from "vitest";
 import {
 	SessionCancelFailed,
-	SessionRuntimeCloseFailed,
 	SessionRuntimeNotFound,
+	SessionRuntimeCloseFailed,
 	SessionRunNotActive,
 	catalogRevisionFromString,
 	sessionIdFromString,
 	workspaceIdFromString,
+	extensionUiRequestIdFromString,
 	type GuiEvent,
 	type SessionCatalogSnapshot,
 	type TimelineSnapshot,
@@ -38,16 +39,18 @@ describe("SessionSupervisor", () => {
 		expect(fixture.events.map((event) => event._tag)).toEqual([
 			"session.statusChanged",
 			"session.opened",
+			"modelThinking.updated",
 			"session.statusChanged",
 			"session.statusChanged",
 			"session.opened",
+			"modelThinking.updated",
 			"session.statusChanged",
 		]);
 		expect(fixture.events[0]).toMatchObject({
 			_tag: "session.statusChanged",
 			session: { workspaceId: "workspace-a", id: "session-1", status: "opening" },
 		});
-		expect(fixture.events[2]).toMatchObject({
+		expect(fixture.events[3]).toMatchObject({
 			_tag: "session.statusChanged",
 			session: { workspaceId: "workspace-a", id: "session-1", status: "ready" },
 		});
@@ -85,6 +88,34 @@ describe("SessionSupervisor", () => {
 			workspaceId: "workspace-a",
 			sessionId: "session-1",
 		});
+	});
+
+	test("close cancels pending extension UI requests before removing the runtime record", async () => {
+		const fixture = createSupervisorFixture({
+			extensionHostUiService: {
+				cancelSessionRequests: vi.fn(),
+				respond: vi.fn(),
+				updateEditorText: vi.fn(),
+			},
+		});
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+
+		await fixture.supervisor.closeSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+
+		expect(fixture.extensionHostUiService?.cancelSessionRequests).toHaveBeenCalledWith("workspace-a", "session-1");
+	});
+
+	test("extension UI response requires an installed extension UI service", () => {
+		const fixture = createSupervisorFixture();
+
+		expect(() =>
+			fixture.supervisor.respondToExtensionUi({
+				workspaceId: workspaceIdFromString("workspace-a"),
+				sessionId: sessionIdFromString("session-1"),
+				extensionUiRequestId: extensionUiRequestIdFromString("extension-ui-1"),
+				response: { kind: "confirm", confirmed: true },
+			}),
+		).toThrow(SessionRuntimeNotFound);
 	});
 
 	test("getTranscript returns a typed error when the runtime is not open", async () => {
@@ -368,7 +399,11 @@ describe("SessionSupervisor", () => {
 	});
 });
 
-function createSupervisorFixture() {
+function createSupervisorFixture(
+	options: {
+		extensionHostUiService?: ConstructorParameters<typeof SessionSupervisor>[0]["extensionHostUiService"];
+	} = {},
+) {
 	const workspaceCatalog: WorkspaceCatalogSnapshot = {
 		revision: catalogRevisionFromString("1"),
 		selectedWorkspaceId: workspaceIdFromString("workspace-a"),
@@ -404,6 +439,13 @@ function createSupervisorFixture() {
 		openSession: vi.fn(async (request) => createHandle(request.workspaceId, request.workspacePath)),
 		cancelRun: vi.fn(async () => undefined),
 		closeSession: vi.fn(async () => undefined),
+		getModelThinking: vi.fn(async (handle) => ({
+			workspaceId: handle.workspaceId,
+			sessionId: handle.sessionId,
+			thinkingLevel: "off" as const,
+			availableThinkingLevels: ["off" as const],
+			models: [],
+		})),
 		getTranscript: vi.fn(
 			async (handle): Promise<TimelineSnapshot> => ({
 				workspaceId: handle.workspaceId,
@@ -411,6 +453,20 @@ function createSupervisorFixture() {
 				entries: [{ id: "entry-1", kind: "user", text: "hello" }],
 			}),
 		),
+		setModel: vi.fn(async (handle) => ({
+			workspaceId: handle.workspaceId,
+			sessionId: handle.sessionId,
+			thinkingLevel: "off" as const,
+			availableThinkingLevels: ["off" as const],
+			models: [],
+		})),
+		setThinkingLevel: vi.fn(async (handle) => ({
+			workspaceId: handle.workspaceId,
+			sessionId: handle.sessionId,
+			thinkingLevel: "off" as const,
+			availableThinkingLevels: ["off" as const],
+			models: [],
+		})),
 		sendMessage: vi.fn(
 			async (): Promise<SendRuntimeMessageResult> =>
 				new Promise<SendRuntimeMessageResult>((resolve) => {
@@ -444,7 +500,13 @@ function createSupervisorFixture() {
 		events,
 		rejectPrompt: (error: unknown) => rejectPromptCompletion?.(error),
 		resolvePrompt: () => resolvePromptCompletion?.(),
-		supervisor: new SessionSupervisor({ catalogService, driver, eventBus }),
+		extensionHostUiService: options.extensionHostUiService,
+		supervisor: new SessionSupervisor({
+			catalogService,
+			driver,
+			eventBus,
+			...(options.extensionHostUiService ? { extensionHostUiService: options.extensionHostUiService } : {}),
+		}),
 		unsubscribe,
 	};
 }
@@ -475,6 +537,11 @@ function createHandle(workspaceId: string, workspacePath: string): RuntimeSessio
 			session: {
 				abort: vi.fn(async () => undefined),
 				bindExtensions: vi.fn(),
+				getAvailableThinkingLevels: vi.fn(() => ["off" as const]),
+				thinkingLevel: "off" as const,
+				setModel: vi.fn(async () => undefined),
+				setThinkingLevel: vi.fn(),
+				supportsThinking: vi.fn(() => false),
 				prompt: vi.fn(async () => undefined),
 				subscribe: vi.fn(() => vi.fn()),
 			},

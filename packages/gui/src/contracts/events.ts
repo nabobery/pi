@@ -3,9 +3,13 @@ import { GuiError } from "./errors.ts";
 import { EventId, RequestId, RunId, SessionId, WorkspaceId } from "./ids.ts";
 import {
 	ExtensionUiRequestSnapshot,
+	ExtensionUiStateSnapshot,
+	ModelThinkingSnapshot,
 	SessionCatalogSnapshot,
 	SessionSnapshot,
+	SettingsSummarySnapshot,
 	TimelineSnapshot,
+	TrustStatusSnapshot,
 	WorkspaceCatalogSnapshot,
 } from "./snapshots.ts";
 
@@ -141,6 +145,21 @@ export class RunCancelled extends Schema.TaggedClass<RunCancelled>()("run.cancel
 	sessionId: SessionId,
 }) {}
 
+export class ModelThinkingUpdated extends Schema.TaggedClass<ModelThinkingUpdated>()("modelThinking.updated", {
+	...EventBaseFields,
+	snapshot: ModelThinkingSnapshot,
+}) {}
+
+export class SettingsSummaryUpdated extends Schema.TaggedClass<SettingsSummaryUpdated>()("settings.summaryUpdated", {
+	...EventBaseFields,
+	summary: SettingsSummarySnapshot,
+}) {}
+
+export class TrustStatusUpdated extends Schema.TaggedClass<TrustStatusUpdated>()("trust.statusUpdated", {
+	...EventBaseFields,
+	status: TrustStatusSnapshot,
+}) {}
+
 export class ExtensionUiRequested extends Schema.TaggedClass<ExtensionUiRequested>()("extensionUi.requested", {
 	...EventBaseFields,
 	request: ExtensionUiRequestSnapshot,
@@ -148,14 +167,24 @@ export class ExtensionUiRequested extends Schema.TaggedClass<ExtensionUiRequeste
 
 export class ExtensionUiResolved extends Schema.TaggedClass<ExtensionUiResolved>()("extensionUi.resolved", {
 	...EventBaseFields,
-	requestId: RequestId,
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	extensionUiRequestId: Schema.String,
+	requestId: Schema.optional(RequestId),
+}) {}
+
+export class ExtensionUiUpdated extends Schema.TaggedClass<ExtensionUiUpdated>()("extensionUi.updated", {
+	...EventBaseFields,
+	update: ExtensionUiStateSnapshot,
 }) {}
 
 export class ExtensionUiCompatibilityIssue extends Schema.TaggedClass<ExtensionUiCompatibilityIssue>()(
 	"extensionUi.compatibilityIssue",
 	{
 		...EventBaseFields,
+		workspaceId: WorkspaceId,
 		sessionId: SessionId,
+		method: Schema.String,
 		message: Schema.String,
 	},
 ) {}
@@ -180,8 +209,12 @@ export const GuiEvent = Schema.Union(
 	RunCompleted,
 	RunFailed,
 	RunCancelled,
+	ModelThinkingUpdated,
+	SettingsSummaryUpdated,
+	TrustStatusUpdated,
 	ExtensionUiRequested,
 	ExtensionUiResolved,
+	ExtensionUiUpdated,
 	ExtensionUiCompatibilityIssue,
 );
 export type GuiEvent = Schema.Schema.Type<typeof GuiEvent>;

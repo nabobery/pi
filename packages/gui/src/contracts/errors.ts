@@ -177,6 +177,115 @@ export class SessionRunNotActive extends Schema.TaggedError<SessionRunNotActive>
 	message: Schema.String,
 }) {}
 
+export class SessionModelNotFound extends Schema.TaggedError<SessionModelNotFound>()("SessionModelNotFound", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	provider: Schema.String,
+	modelId: Schema.String,
+	message: Schema.String,
+}) {}
+
+export class SessionModelAuthUnavailable extends Schema.TaggedError<SessionModelAuthUnavailable>()(
+	"SessionModelAuthUnavailable",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		provider: Schema.String,
+		modelId: Schema.String,
+		message: Schema.String,
+	},
+) {}
+
+export class SessionModelSetFailed extends Schema.TaggedError<SessionModelSetFailed>()("SessionModelSetFailed", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	provider: Schema.String,
+	modelId: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class SessionThinkingSetFailed extends Schema.TaggedError<SessionThinkingSetFailed>()(
+	"SessionThinkingSetFailed",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		thinkingLevel: Schema.String,
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
+
+export class SettingsSummaryReadFailed extends Schema.TaggedError<SettingsSummaryReadFailed>()(
+	"SettingsSummaryReadFailed",
+	{
+		workspaceId: Schema.String,
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
+
+export class SettingsFileUnavailable extends Schema.TaggedError<SettingsFileUnavailable>()("SettingsFileUnavailable", {
+	workspaceId: Schema.String,
+	scope: Schema.Literal("global", "project"),
+	path: Schema.String,
+	message: Schema.String,
+}) {}
+
+export class SettingsFileOpenFailed extends Schema.TaggedError<SettingsFileOpenFailed>()("SettingsFileOpenFailed", {
+	workspaceId: Schema.String,
+	scope: Schema.Literal("global", "project"),
+	path: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class TrustStatusReadFailed extends Schema.TaggedError<TrustStatusReadFailed>()("TrustStatusReadFailed", {
+	workspaceId: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class ExtensionUiRequestNotFound extends Schema.TaggedError<ExtensionUiRequestNotFound>()(
+	"ExtensionUiRequestNotFound",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		extensionUiRequestId: Schema.String,
+		message: Schema.String,
+	},
+) {}
+
+export class ExtensionUiSessionMismatch extends Schema.TaggedError<ExtensionUiSessionMismatch>()(
+	"ExtensionUiSessionMismatch",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		extensionUiRequestId: Schema.String,
+		message: Schema.String,
+	},
+) {}
+
+export class ExtensionUiResponseInvalid extends Schema.TaggedError<ExtensionUiResponseInvalid>()(
+	"ExtensionUiResponseInvalid",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		extensionUiRequestId: Schema.String,
+		message: Schema.String,
+	},
+) {}
+
+export class ExtensionUiRequestCancelled extends Schema.TaggedError<ExtensionUiRequestCancelled>()(
+	"ExtensionUiRequestCancelled",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		extensionUiRequestId: Schema.String,
+		message: Schema.String,
+	},
+) {}
+
 export const GuiError = Schema.Union(
 	InvalidRendererCommand,
 	UnauthorizedIpcSender,
@@ -204,6 +313,18 @@ export const GuiError = Schema.Union(
 	SessionPromptFailed,
 	SessionCancelFailed,
 	SessionRunNotActive,
+	SessionModelNotFound,
+	SessionModelAuthUnavailable,
+	SessionModelSetFailed,
+	SessionThinkingSetFailed,
+	SettingsSummaryReadFailed,
+	SettingsFileUnavailable,
+	SettingsFileOpenFailed,
+	TrustStatusReadFailed,
+	ExtensionUiRequestNotFound,
+	ExtensionUiSessionMismatch,
+	ExtensionUiResponseInvalid,
+	ExtensionUiRequestCancelled,
 );
 export type GuiError = Schema.Schema.Type<typeof GuiError>;
 

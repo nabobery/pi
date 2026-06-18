@@ -1,14 +1,21 @@
-import { SessionManager } from "@earendil-works/pi-coding-agent/runtime";
+import { SessionManager, getSupportedThinkingLevels } from "@earendil-works/pi-coding-agent/runtime";
 import {
+	SessionModelAuthUnavailable,
+	SessionModelNotFound,
+	SessionModelSetFailed,
 	SessionCancelFailed,
 	SessionPromptRejected,
 	SessionRuntimeBindFailed,
 	SessionRuntimeCloseFailed,
 	SessionRuntimeCreateFailed,
 	SessionRuntimeOpenFailed,
+	SessionThinkingSetFailed,
 	SessionTranscriptReadFailed,
 	sessionIdFromString,
+	type ModelOptionSnapshot,
+	type ModelThinkingSnapshot,
 	type SessionId,
+	type ThinkingLevel,
 	type TimelineSnapshot,
 	type WorkspaceId,
 } from "../../contracts/index.ts";
@@ -153,6 +160,70 @@ export class PiSdkSessionDriver implements SessionDriver {
 		}
 	}
 
+	async getModelThinking(handle: RuntimeSessionHandle): Promise<ModelThinkingSnapshot> {
+		return modelThinkingSnapshot(handle);
+	}
+
+	async setModel(handle: RuntimeSessionHandle, provider: string, modelId: string): Promise<ModelThinkingSnapshot> {
+		const registry = handle.runtime.services?.modelRegistry;
+		if (!registry) {
+			throw new SessionModelNotFound({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				provider,
+				modelId,
+				message: "Model registry is not available",
+			});
+		}
+		const model = registry.find(provider, modelId);
+		if (!model) {
+			throw new SessionModelNotFound({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				provider,
+				modelId,
+				message: `Model ${provider}/${modelId} is not available`,
+			});
+		}
+		if (!registry.hasConfiguredAuth(model)) {
+			throw new SessionModelAuthUnavailable({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				provider,
+				modelId,
+				message: `No configured auth for ${provider}/${modelId}`,
+			});
+		}
+		try {
+			await handle.runtime.session.setModel(model);
+			return modelThinkingSnapshot(handle);
+		} catch (error) {
+			throw new SessionModelSetFailed({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				provider,
+				modelId,
+				message: "Failed to set Pi session model",
+				cause: getErrorMessage(error),
+			});
+		}
+	}
+
+	async setThinkingLevel(handle: RuntimeSessionHandle, level: ThinkingLevel): Promise<ModelThinkingSnapshot> {
+		try {
+			handle.runtime.session.setThinkingLevel(level);
+			return modelThinkingSnapshot(handle);
+		} catch (error) {
+			throw new SessionThinkingSetFailed({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				thinkingLevel: level,
+				message: "Failed to set Pi session thinking level",
+				cause: getErrorMessage(error),
+			});
+		}
+	}
+
 	subscribe(handle: RuntimeSessionHandle, listener: Parameters<SessionDriver["subscribe"]>[1]): () => void {
 		return handle.runtime.session.subscribe(listener);
 	}
@@ -217,4 +288,44 @@ function enrichRuntimeError(
 function getErrorMessage(error: unknown): string {
 	if (error instanceof Error) return error.message;
 	return String(error);
+}
+
+function modelThinkingSnapshot(handle: RuntimeSessionHandle): ModelThinkingSnapshot {
+	const model = handle.runtime.session.model;
+	return {
+		workspaceId: handle.workspaceId,
+		sessionId: handle.sessionId,
+		...(model?.provider ? { provider: model.provider } : {}),
+		...(model?.id ? { modelId: model.id } : {}),
+		...(model?.name ? { modelName: model.name } : {}),
+		thinkingLevel: handle.runtime.session.thinkingLevel,
+		availableThinkingLevels: handle.runtime.session.getAvailableThinkingLevels(),
+		models: modelOptions(handle),
+	};
+}
+
+function modelOptions(handle: RuntimeSessionHandle): ModelOptionSnapshot[] {
+	const registry = handle.runtime.services?.modelRegistry;
+	if (registry) {
+		return registry.getAll().map((model) => ({
+			provider: model.provider,
+			modelId: model.id,
+			name: model.name ?? model.id,
+			authAvailable: registry.hasConfiguredAuth(model),
+			supportsThinking: model.reasoning === true,
+			availableThinkingLevels: getSupportedThinkingLevels(model),
+		}));
+	}
+	const model = handle.runtime.session.model;
+	if (!model) return [];
+	return [
+		{
+			provider: model.provider,
+			modelId: model.id,
+			name: model.name ?? model.id,
+			authAvailable: true,
+			supportsThinking: model.reasoning === true,
+			availableThinkingLevels: handle.runtime.session.getAvailableThinkingLevels(),
+		},
+	];
 }

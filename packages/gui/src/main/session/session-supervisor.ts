@@ -1,5 +1,6 @@
 import {
 	SessionAlreadyOpen,
+	ModelThinkingUpdated,
 	QueueUpdated,
 	ReceiptEmitted,
 	RunCancelled,
@@ -18,18 +19,23 @@ import {
 	ToolFinished,
 	ToolStarted,
 	ToolUpdated,
+	WorkspaceNotFound,
 	type GuiEvent,
+	type ExtensionUiRequestId,
+	type ModelThinkingSnapshot,
 	type RequestId,
 	type RunId,
 	type SessionCatalogSnapshot,
 	type SessionId,
 	type SessionSnapshot,
 	type TimelineSnapshot,
+	type ThinkingLevel,
 	type WorkspaceCatalogSnapshot,
 	type WorkspaceId,
 	runIdFromString,
 } from "../../contracts/index.ts";
 import { createRuntimeSessionKey, type RuntimeSessionKey } from "./session-key.ts";
+import type { ExtensionHostUiService, ExtensionUiResponse } from "./extension-host-ui-service.ts";
 import type { RuntimeSessionEvent, RuntimeSessionHandle, SessionDriver } from "./session-driver.ts";
 
 export interface SessionCatalogRuntimeService {
@@ -51,6 +57,7 @@ export interface SessionSupervisorOptions {
 	catalogService: SessionCatalogRuntimeService;
 	driver: SessionDriver;
 	eventBus: SessionSupervisorEventBus;
+	extensionHostUiService?: Pick<ExtensionHostUiService, "cancelSessionRequests" | "respond" | "updateEditorText">;
 }
 
 interface ManagedSessionRecord {
@@ -64,6 +71,7 @@ export class SessionSupervisor {
 	private readonly catalogService: SessionCatalogRuntimeService;
 	private readonly driver: SessionDriver;
 	private readonly eventBus: SessionSupervisorEventBus;
+	private readonly extensionHostUiService: SessionSupervisorOptions["extensionHostUiService"];
 	private readonly records = new Map<RuntimeSessionKey, ManagedSessionRecord>();
 	private runSequence = 0;
 
@@ -71,6 +79,7 @@ export class SessionSupervisor {
 		this.catalogService = options.catalogService;
 		this.driver = options.driver;
 		this.eventBus = options.eventBus;
+		this.extensionHostUiService = options.extensionHostUiService;
 	}
 
 	hasRuntime(workspaceId: WorkspaceId, sessionId: SessionId): boolean {
@@ -103,6 +112,7 @@ export class SessionSupervisor {
 		}
 
 		await this.driver.closeSession(record.handle);
+		this.extensionHostUiService?.cancelSessionRequests(workspaceId, sessionId);
 		record.unsubscribe();
 		this.records.delete(key);
 		this.eventBus.publish(new SessionClosed({ ...this.eventBus.nextEventBase(), workspaceId, sessionId }));
@@ -200,6 +210,60 @@ export class SessionSupervisor {
 		return this.driver.getTranscript(record.handle);
 	}
 
+	async getModelThinking(workspaceId: WorkspaceId, sessionId: SessionId): Promise<ModelThinkingSnapshot> {
+		const snapshot = await this.driver.getModelThinking(this.getRecord(workspaceId, sessionId).handle);
+		this.publishModelThinking(snapshot);
+		return snapshot;
+	}
+
+	async setModel(
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		provider: string,
+		modelId: string,
+	): Promise<ModelThinkingSnapshot> {
+		const snapshot = await this.driver.setModel(this.getRecord(workspaceId, sessionId).handle, provider, modelId);
+		this.publishModelThinking(snapshot);
+		return snapshot;
+	}
+
+	async setThinkingLevel(
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		thinkingLevel: ThinkingLevel,
+	): Promise<ModelThinkingSnapshot> {
+		const snapshot = await this.driver.setThinkingLevel(this.getRecord(workspaceId, sessionId).handle, thinkingLevel);
+		this.publishModelThinking(snapshot);
+		return snapshot;
+	}
+
+	respondToExtensionUi(request: {
+		workspaceId: WorkspaceId;
+		sessionId: SessionId;
+		extensionUiRequestId: ExtensionUiRequestId;
+		response: ExtensionUiResponse;
+	}): void {
+		if (!this.extensionHostUiService) {
+			throw new SessionRuntimeNotFound({
+				workspaceId: request.workspaceId,
+				sessionId: request.sessionId,
+				message: "Extension UI service is not available",
+			});
+		}
+		this.extensionHostUiService.respond(request);
+	}
+
+	updateExtensionEditorText(workspaceId: WorkspaceId, sessionId: SessionId, text: string): void {
+		if (!this.extensionHostUiService) {
+			throw new SessionRuntimeNotFound({
+				workspaceId,
+				sessionId,
+				message: "Extension UI service is not available",
+			});
+		}
+		this.extensionHostUiService.updateEditorText(workspaceId, sessionId, text);
+	}
+
 	private getRecord(workspaceId: WorkspaceId, sessionId: SessionId): ManagedSessionRecord {
 		const key = createRuntimeSessionKey(workspaceId, sessionId);
 		const record = this.records.get(key);
@@ -240,6 +304,7 @@ export class SessionSupervisor {
 			const unsubscribe = this.driver.subscribe(handle, (event) => this.handleRuntimeEvent(key, event));
 			this.records.set(key, { handle, session: readySession, unsubscribe });
 			this.eventBus.publish(new SessionOpened({ ...this.eventBus.nextEventBase(), session: readySession }));
+			this.publishModelThinking(await this.driver.getModelThinking(handle));
 			this.publishStatus(session, "ready");
 		} catch (error) {
 			this.publishStatus(session, "failed");
@@ -250,7 +315,12 @@ export class SessionSupervisor {
 	private async getWorkspacePath(workspaceId: WorkspaceId): Promise<string> {
 		const catalog = await this.catalogService.getWorkspaceCatalog();
 		const workspace = catalog.workspaces.find((entry) => entry.id === workspaceId);
-		if (!workspace) return workspaceId;
+		if (!workspace) {
+			throw new WorkspaceNotFound({
+				workspaceId,
+				message: `Workspace ${workspaceId} is not in the GUI catalog`,
+			});
+		}
 		return workspace.path;
 	}
 
@@ -283,6 +353,10 @@ export class SessionSupervisor {
 		);
 	}
 
+	private publishModelThinking(snapshot: ModelThinkingSnapshot): void {
+		this.eventBus.publish(new ModelThinkingUpdated({ ...this.eventBus.nextEventBase(), snapshot }));
+	}
+
 	private handleRuntimeEvent(key: RuntimeSessionKey, event: RuntimeSessionEvent): void {
 		const record = this.records.get(key);
 		if (!record) return;
@@ -297,6 +371,10 @@ export class SessionSupervisor {
 					followUpCount: event.followUp.length,
 				}),
 			);
+			return;
+		}
+		if (event.type === "thinking_level_changed") {
+			void this.getModelThinking(record.handle.workspaceId, record.handle.sessionId).catch(() => undefined);
 			return;
 		}
 		if (!runId) return;

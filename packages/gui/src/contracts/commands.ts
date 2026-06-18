@@ -1,7 +1,16 @@
 import { Effect, Schema } from "effect";
 import { GuiError } from "./errors.ts";
 import { ExtensionUiRequestId, RequestId, SessionId, WorkspaceId } from "./ids.ts";
-import { BootstrapSnapshot, SessionCatalogSnapshot, TimelineSnapshot, WorkspaceCatalogSnapshot } from "./snapshots.ts";
+import {
+	BootstrapSnapshot,
+	ModelThinkingSnapshot,
+	SessionCatalogSnapshot,
+	SettingsSummarySnapshot,
+	ThinkingLevel,
+	TimelineSnapshot,
+	TrustStatusSnapshot,
+	WorkspaceCatalogSnapshot,
+} from "./snapshots.ts";
 
 const VoidSuccess = Schema.Void;
 
@@ -103,7 +112,7 @@ export class SessionCancelRun extends Schema.TaggedRequest<SessionCancelRun>()("
 
 export class SessionSetModel extends Schema.TaggedRequest<SessionSetModel>()("session.setModel", {
 	failure: GuiError,
-	success: VoidSuccess,
+	success: ModelThinkingSnapshot,
 	payload: {
 		requestId: RequestId,
 		workspaceId: WorkspaceId,
@@ -117,8 +126,8 @@ export class SessionSetThinkingLevel extends Schema.TaggedRequest<SessionSetThin
 	"session.setThinkingLevel",
 	{
 		failure: GuiError,
-		success: VoidSuccess,
-		payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId, thinkingLevel: Schema.String },
+		success: ModelThinkingSnapshot,
+		payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId, thinkingLevel: ThinkingLevel },
 	},
 ) {}
 
@@ -131,7 +140,90 @@ export class SessionGetTranscript extends Schema.TaggedRequest<SessionGetTranscr
 export class ExtensionUiRespond extends Schema.TaggedRequest<ExtensionUiRespond>()("extensionUi.respond", {
 	failure: GuiError,
 	success: VoidSuccess,
-	payload: { requestId: RequestId, extensionUiRequestId: ExtensionUiRequestId, value: Schema.Unknown },
+	payload: {
+		requestId: RequestId,
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		extensionUiRequestId: ExtensionUiRequestId,
+		response: Schema.Union(
+			Schema.Struct({ kind: Schema.Literal("confirm"), confirmed: Schema.Boolean }),
+			Schema.Struct({
+				kind: Schema.Literal("input"),
+				value: Schema.optional(Schema.String),
+				cancelled: Schema.Boolean,
+			}),
+			Schema.Struct({
+				kind: Schema.Literal("select"),
+				value: Schema.optional(Schema.String),
+				cancelled: Schema.Boolean,
+			}),
+			Schema.Struct({
+				kind: Schema.Literal("editor"),
+				value: Schema.optional(Schema.String),
+				cancelled: Schema.Boolean,
+			}),
+			Schema.Struct({ kind: Schema.Literal("getEditorText"), value: Schema.String }),
+		),
+	},
+}) {}
+
+export class ExtensionUiUpdateEditorText extends Schema.TaggedRequest<ExtensionUiUpdateEditorText>()(
+	"extensionUi.updateEditorText",
+	{
+		failure: GuiError,
+		success: VoidSuccess,
+		payload: {
+			requestId: RequestId,
+			workspaceId: WorkspaceId,
+			sessionId: SessionId,
+			text: Schema.String,
+		},
+	},
+) {}
+
+export class SettingsGetSummary extends Schema.TaggedRequest<SettingsGetSummary>()("settings.getSummary", {
+	failure: GuiError,
+	success: SettingsSummarySnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId },
+}) {}
+
+export class SettingsOpenGlobalFile extends Schema.TaggedRequest<SettingsOpenGlobalFile>()("settings.openGlobalFile", {
+	failure: GuiError,
+	success: VoidSuccess,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId },
+}) {}
+
+export class SettingsRevealGlobalFile extends Schema.TaggedRequest<SettingsRevealGlobalFile>()(
+	"settings.revealGlobalFile",
+	{
+		failure: GuiError,
+		success: VoidSuccess,
+		payload: { requestId: RequestId, workspaceId: WorkspaceId },
+	},
+) {}
+
+export class SettingsOpenProjectFile extends Schema.TaggedRequest<SettingsOpenProjectFile>()(
+	"settings.openProjectFile",
+	{
+		failure: GuiError,
+		success: VoidSuccess,
+		payload: { requestId: RequestId, workspaceId: WorkspaceId },
+	},
+) {}
+
+export class SettingsRevealProjectFile extends Schema.TaggedRequest<SettingsRevealProjectFile>()(
+	"settings.revealProjectFile",
+	{
+		failure: GuiError,
+		success: VoidSuccess,
+		payload: { requestId: RequestId, workspaceId: WorkspaceId },
+	},
+) {}
+
+export class TrustGetStatus extends Schema.TaggedRequest<TrustGetStatus>()("trust.getStatus", {
+	failure: GuiError,
+	success: TrustStatusSnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId },
 }) {}
 
 export const GuiCommand = Schema.Union(
@@ -154,6 +246,13 @@ export const GuiCommand = Schema.Union(
 	SessionSetThinkingLevel,
 	SessionGetTranscript,
 	ExtensionUiRespond,
+	ExtensionUiUpdateEditorText,
+	SettingsGetSummary,
+	SettingsOpenGlobalFile,
+	SettingsRevealGlobalFile,
+	SettingsOpenProjectFile,
+	SettingsRevealProjectFile,
+	TrustGetStatus,
 );
 export type GuiCommand = Schema.Schema.Type<typeof GuiCommand>;
 

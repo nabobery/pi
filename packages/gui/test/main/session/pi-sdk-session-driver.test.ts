@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import type { Api, Model } from "@earendil-works/pi-coding-agent/runtime";
 import {
 	SessionRuntimeCloseFailed,
 	SessionRuntimeOpenFailed,
@@ -234,7 +235,50 @@ describe("PiSdkSessionDriver", () => {
 		expect(listener).toHaveBeenCalledWith({ type: "queue_update", steering: ["a"], followUp: [] });
 		expect(unsubscribe).toHaveBeenCalledTimes(1);
 	});
+
+	test("uses model-specific supported thinking levels in model snapshots", async () => {
+		const model = createModel({
+			id: "reasoning-model",
+			reasoning: true,
+			thinkingLevelMap: { minimal: null, xhigh: "max" },
+		});
+		const registry = {
+			find: vi.fn(() => model),
+			getAll: vi.fn(() => [model]),
+			hasConfiguredAuth: vi.fn(() => true),
+		};
+		const handle = createRuntimeHandle({});
+		handle.runtime.services = { modelRegistry: registry };
+		handle.runtime.session.model = model;
+		const driver = new PiSdkSessionDriver({
+			openSessionManager: vi.fn(),
+			runtimeSupervisor: { createRuntime: vi.fn() },
+		});
+
+		const snapshot = await driver.getModelThinking(handle);
+
+		expect(snapshot.models[0]).toMatchObject({
+			modelId: "reasoning-model",
+			availableThinkingLevels: ["off", "low", "medium", "high", "xhigh"],
+		});
+	});
 });
+
+function createModel(overrides: Partial<Model<Api>>): Model<Api> {
+	return {
+		api: "openai-responses",
+		baseUrl: "https://example.test",
+		contextWindow: 128000,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		id: "model",
+		input: ["text"],
+		maxTokens: 4096,
+		name: "Model",
+		provider: "openai",
+		reasoning: false,
+		...overrides,
+	};
+}
 
 function createRuntimeHandle(overrides: {
 	abort?: () => Promise<void>;
@@ -248,6 +292,11 @@ function createRuntimeHandle(overrides: {
 			session: {
 				abort: overrides.abort ?? vi.fn().mockResolvedValue(undefined),
 				bindExtensions: vi.fn(),
+				getAvailableThinkingLevels: vi.fn(() => ["off" as const]),
+				thinkingLevel: "off" as const,
+				setModel: vi.fn(async () => undefined),
+				setThinkingLevel: vi.fn(),
+				supportsThinking: vi.fn(() => false),
 				prompt: overrides.prompt ?? vi.fn().mockResolvedValue(undefined),
 				subscribe: overrides.subscribe ?? vi.fn(() => () => undefined),
 			},
@@ -268,6 +317,11 @@ function createRuntimeSession(
 	return {
 		abort: vi.fn().mockResolvedValue(undefined),
 		bindExtensions: vi.fn(),
+		getAvailableThinkingLevels: vi.fn(() => ["off" as const]),
+		thinkingLevel: "off" as const,
+		setModel: vi.fn(async () => undefined),
+		setThinkingLevel: vi.fn(),
+		supportsThinking: vi.fn(() => false),
 		prompt: vi.fn().mockResolvedValue(undefined),
 		subscribe: vi.fn(() => () => undefined),
 		...(overrides.sessionManager ? { sessionManager: overrides.sessionManager } : {}),
