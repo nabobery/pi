@@ -12,14 +12,20 @@ import {
 	ReceiptEmitted,
 	SessionArchive,
 	SessionCatalogSnapshot,
+	SessionClose,
+	SessionClosed,
+	SessionGetTranscript,
+	SessionRuntimeNotFound,
 	SessionRename,
 	SessionSelected,
+	TimelineSnapshot,
 	WorkspacePickDirectory,
 	WorkspaceRemove,
 	WorkspaceSynced,
 	decodeGuiCommand,
 	decodeGuiError,
 	decodeGuiEvent,
+	decodeTimelineSnapshot,
 	eventIdFromString,
 	requestIdFromString,
 	sessionIdFromString,
@@ -65,6 +71,21 @@ describe("gui contracts", () => {
 				}),
 			),
 		).resolves.toBeInstanceOf(SessionArchive);
+	});
+
+	test("decodes runtime-scoped session commands with workspace identity", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+
+		await expect(
+			decodeGuiCommand(new SessionClose({ requestId: requestIdFromString("request-6"), workspaceId, sessionId })),
+		).resolves.toBeInstanceOf(SessionClose);
+		await expect(
+			decodeGuiCommand(
+				new SessionGetTranscript({ requestId: requestIdFromString("request-7"), workspaceId, sessionId }),
+			),
+		).resolves.toBeInstanceOf(SessionGetTranscript);
+		await expect(decodeGuiCommand({ _tag: "session.close", requestId: "request-8", sessionId })).rejects.toThrow();
 	});
 
 	test("rejects commands with unknown tags", async () => {
@@ -126,6 +147,16 @@ describe("gui contracts", () => {
 				}),
 			),
 		).resolves.toBeInstanceOf(SessionSelected);
+		await expect(
+			decodeGuiEvent(
+				new SessionClosed({
+					eventId: eventIdFromString("event-4"),
+					sequence: 4,
+					workspaceId,
+					sessionId,
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionClosed);
 	});
 
 	test("decodes error serialization", async () => {
@@ -152,6 +183,19 @@ describe("gui contracts", () => {
 		expect(error._tag).toBe("InvalidWorkspacePath");
 	});
 
+	test("decodes phase 4 runtime errors", async () => {
+		const error = await decodeGuiError(
+			new SessionRuntimeNotFound({
+				workspaceId: "workspace-1",
+				sessionId: "session-1",
+				message: "Runtime is not open",
+			}),
+		);
+
+		expect(error).toBeInstanceOf(SessionRuntimeNotFound);
+		expect(error._tag).toBe("SessionRuntimeNotFound");
+	});
+
 	test("decodes session catalog snapshots", () => {
 		const workspaceId = workspaceIdFromString("workspace-1");
 		const sessionId = sessionIdFromString("session-1");
@@ -164,7 +208,7 @@ describe("gui contracts", () => {
 						id: sessionId,
 						workspaceId,
 						title: "Session one",
-						status: "idle",
+						status: "replacing",
 						updatedAt: "2026-06-18T00:00:00.000Z",
 						preview: "Preview",
 						messageCount: 2,
@@ -173,6 +217,29 @@ describe("gui contracts", () => {
 				],
 			}),
 		).toMatchObject({ workspaceId, selectedSessionId: sessionId });
+	});
+
+	test("decodes timeline snapshots with workspace identity", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+
+		expect(
+			TimelineSnapshot.make({
+				workspaceId,
+				sessionId,
+				entries: [{ id: "entry-1", kind: "user", text: "hello" }],
+			}),
+		).toEqual({
+			workspaceId,
+			sessionId,
+			entries: [{ id: "entry-1", kind: "user", text: "hello" }],
+		});
+		await expect(
+			decodeTimelineSnapshot({
+				sessionId,
+				entries: [],
+			}),
+		).rejects.toThrow();
 	});
 
 	test("decodes bootstrap snapshots with warnings", () => {

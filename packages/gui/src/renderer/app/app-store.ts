@@ -2,11 +2,15 @@ import { useSyncExternalStore } from "react";
 import {
 	SessionArchive,
 	type SessionCatalogSnapshot,
+	SessionClose,
 	SessionCreate,
+	SessionGetTranscript,
 	type SessionId,
 	SessionOpen,
 	SessionRename,
 	SessionUnarchive,
+	type SessionSnapshot,
+	type TimelineSnapshot,
 	type WorkspaceCatalogSnapshot,
 	InternalIpcError,
 	WorkspacePickDirectory,
@@ -15,6 +19,7 @@ import {
 	decodeGuiCommandResult,
 	decodeGuiEvent,
 	decodeSessionCatalogSnapshot,
+	decodeTimelineSnapshot,
 	decodeWorkspaceCatalogSnapshot,
 	type GuiCommand,
 	type GuiCommandResult,
@@ -36,14 +41,17 @@ export interface RendererCatalogTransport {
 export interface CatalogViewState {
 	workspaceCatalog: WorkspaceCatalogSnapshot;
 	sessionCatalogs: Readonly<Record<string, SessionCatalogSnapshot>>;
+	timelines: Readonly<Record<string, TimelineSnapshot>>;
 	error: string | undefined;
 	pending: boolean;
 }
 
 export interface GuiCatalogStore {
 	archiveSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
+	closeSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	createSession(workspaceId: WorkspaceId): Promise<void>;
 	getSnapshot(): CatalogViewState;
+	getTranscript(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	openSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	pickWorkspaceDirectory(): Promise<void>;
 	renameSession(workspaceId: WorkspaceId, sessionId: SessionId, title: string): Promise<void>;
@@ -67,6 +75,7 @@ export function createGuiCatalogStore(
 	let state: CatalogViewState = {
 		workspaceCatalog,
 		sessionCatalogs: {},
+		timelines: {},
 		error: options.initialError,
 		pending: false,
 	};
@@ -99,9 +108,15 @@ export function createGuiCatalogStore(
 	return {
 		archiveSession: (workspaceId, sessionId) =>
 			invoke(new SessionArchive({ requestId: nextRequestId("session.archive"), workspaceId, sessionId })),
+		closeSession: (workspaceId, sessionId) =>
+			invoke(new SessionClose({ requestId: nextRequestId("session.close"), workspaceId, sessionId })),
 		createSession: (workspaceId) =>
 			invoke(new SessionCreate({ requestId: nextRequestId("session.create"), workspaceId })),
 		getSnapshot: () => state,
+		getTranscript: (workspaceId, sessionId) =>
+			invoke(
+				new SessionGetTranscript({ requestId: nextRequestId("session.getTranscript"), workspaceId, sessionId }),
+			),
 		openSession: (workspaceId, sessionId) =>
 			invoke(new SessionOpen({ requestId: nextRequestId("session.open"), workspaceId, sessionId })),
 		pickWorkspaceDirectory: () =>
@@ -188,6 +203,30 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 			},
 		};
 	}
+	if (event._tag === "session.opened" || event._tag === "session.statusChanged") {
+		return upsertSession(state, event.session);
+	}
+	if (event._tag === "session.closed") {
+		const key = timelineKey(event.workspaceId, event.sessionId);
+		const previous = state.sessionCatalogs[event.workspaceId];
+		const { [key]: _closedTimeline, ...timelines } = state.timelines;
+		if (!previous) return { ...state, timelines };
+		const sessions: SessionSnapshot[] = [];
+		for (const session of previous.sessions) {
+			sessions.push(session.id === event.sessionId ? { ...session, status: "closed" } : session);
+		}
+		return {
+			...state,
+			timelines,
+			sessionCatalogs: {
+				...state.sessionCatalogs,
+				[event.workspaceId]: {
+					...previous,
+					sessions,
+				},
+			},
+		};
+	}
 	return state;
 }
 
@@ -199,6 +238,16 @@ async function applyResult(state: CatalogViewState, data: unknown): Promise<Cata
 		return {
 			...state,
 			sessionCatalogs: { ...state.sessionCatalogs, [sessionCatalog.workspaceId]: sessionCatalog },
+		};
+	}
+	const timeline = await decodeTimeline(data);
+	if (timeline) {
+		return {
+			...state,
+			timelines: {
+				...state.timelines,
+				[timelineKey(timeline.workspaceId, timeline.sessionId)]: timeline,
+			},
 		};
 	}
 	return state;
@@ -218,6 +267,48 @@ async function decodeSessionCatalog(data: unknown): Promise<SessionCatalogSnapsh
 	} catch {
 		return undefined;
 	}
+}
+
+async function decodeTimeline(data: unknown): Promise<TimelineSnapshot | undefined> {
+	try {
+		return await decodeTimelineSnapshot(data);
+	} catch {
+		return undefined;
+	}
+}
+
+function upsertSession(state: CatalogViewState, session: SessionCatalogSnapshot["sessions"][number]): CatalogViewState {
+	const previous = state.sessionCatalogs[session.workspaceId];
+	if (!previous) {
+		return {
+			...state,
+			sessionCatalogs: {
+				...state.sessionCatalogs,
+				[session.workspaceId]: {
+					workspaceId: session.workspaceId,
+					selectedSessionId: session.id,
+					sessions: [session],
+				},
+			},
+		};
+	}
+	const exists = previous.sessions.some((entry) => entry.id === session.id);
+	return {
+		...state,
+		sessionCatalogs: {
+			...state.sessionCatalogs,
+			[session.workspaceId]: {
+				...previous,
+				sessions: exists
+					? previous.sessions.map((entry) => (entry.id === session.id ? session : entry))
+					: [session, ...previous.sessions],
+			},
+		},
+	};
+}
+
+function timelineKey(workspaceId: WorkspaceId, sessionId: SessionId): string {
+	return `${workspaceId}:${sessionId}`;
 }
 
 function nextRequestId(prefix: string) {

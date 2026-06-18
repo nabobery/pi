@@ -81,6 +81,73 @@ export class SessionRenameFailed extends Schema.TaggedError<SessionRenameFailed>
 	cause: Schema.optional(Schema.String),
 }) {}
 
+export class SessionRuntimeNotFound extends Schema.TaggedError<SessionRuntimeNotFound>()("SessionRuntimeNotFound", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	message: Schema.String,
+}) {}
+
+export class SessionRuntimeCreateFailed extends Schema.TaggedError<SessionRuntimeCreateFailed>()(
+	"SessionRuntimeCreateFailed",
+	{
+		workspaceId: Schema.optional(Schema.String),
+		sessionId: Schema.optional(Schema.String),
+		sessionFilePath: Schema.optional(Schema.String),
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
+
+export class SessionRuntimeOpenFailed extends Schema.TaggedError<SessionRuntimeOpenFailed>()(
+	"SessionRuntimeOpenFailed",
+	{
+		workspaceId: Schema.optional(Schema.String),
+		sessionId: Schema.optional(Schema.String),
+		sessionFilePath: Schema.optional(Schema.String),
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
+
+export class SessionRuntimeCloseFailed extends Schema.TaggedError<SessionRuntimeCloseFailed>()(
+	"SessionRuntimeCloseFailed",
+	{
+		workspaceId: Schema.optional(Schema.String),
+		sessionId: Schema.String,
+		sessionFilePath: Schema.optional(Schema.String),
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
+
+export class SessionRuntimeBindFailed extends Schema.TaggedError<SessionRuntimeBindFailed>()(
+	"SessionRuntimeBindFailed",
+	{
+		workspaceId: Schema.optional(Schema.String),
+		sessionId: Schema.String,
+		sessionFilePath: Schema.optional(Schema.String),
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
+
+export class SessionAlreadyOpen extends Schema.TaggedError<SessionAlreadyOpen>()("SessionAlreadyOpen", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	message: Schema.String,
+}) {}
+
+export class SessionTranscriptReadFailed extends Schema.TaggedError<SessionTranscriptReadFailed>()(
+	"SessionTranscriptReadFailed",
+	{
+		workspaceId: Schema.optional(Schema.String),
+		sessionId: Schema.String,
+		sessionFilePath: Schema.optional(Schema.String),
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
+
 export const GuiError = Schema.Union(
 	InvalidRendererCommand,
 	UnauthorizedIpcSender,
@@ -97,6 +164,13 @@ export const GuiError = Schema.Union(
 	SessionSyncFailed,
 	SessionCreateFailed,
 	SessionRenameFailed,
+	SessionRuntimeNotFound,
+	SessionRuntimeCreateFailed,
+	SessionRuntimeOpenFailed,
+	SessionRuntimeCloseFailed,
+	SessionRuntimeBindFailed,
+	SessionAlreadyOpen,
+	SessionTranscriptReadFailed,
 );
 export type GuiError = Schema.Schema.Type<typeof GuiError>;
 

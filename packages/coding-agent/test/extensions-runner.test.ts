@@ -86,6 +86,24 @@ describe("ExtensionRunner", () => {
 		getSystemPrompt: () => "",
 	};
 
+	it("lets extensions import documented root package symbols", async () => {
+		const extensionPath = path.join(extensionsDir, "root-import.ts");
+		fs.writeFileSync(
+			extensionPath,
+			`import { VERSION } from "@earendil-works/pi-coding-agent";
+
+export default function(pi) {
+	pi.registerFlag("root-version", { type: "string", default: VERSION });
+}`,
+		);
+
+		const extensionsResult = await loadExtensions([extensionPath], tempDir);
+
+		expect(extensionsResult.errors).toEqual([]);
+		expect(extensionsResult.extensions).toHaveLength(1);
+		expect(extensionsResult.runtime.flagValues.get("root-version")).toEqual(expect.any(String));
+	});
+
 	describe("project_trust", () => {
 		it("continues past undecided handlers and returns the first yes/no decision", async () => {
 			const undecidedPath = path.join(extensionsDir, "undecided.ts");

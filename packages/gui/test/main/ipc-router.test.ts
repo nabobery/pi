@@ -6,15 +6,21 @@ import {
 	AppBootstrap,
 	SessionArchive,
 	type SessionCatalogSnapshot,
+	SessionCancelRun,
+	SessionClose,
 	SessionCreate,
+	SessionGetTranscript,
 	SessionOpen,
 	SessionRename,
 	SessionUnarchive,
+	type TimelineSnapshot,
 	type WorkspaceCatalogSnapshot,
 	WorkspaceAdd,
 	WorkspacePickDirectory,
 	WorkspaceSync,
 	requestIdFromString,
+	sessionIdFromString,
+	workspaceIdFromString,
 } from "../../src/contracts/index.ts";
 import { createAppOriginPolicy, getPackagedRendererEntryUrl } from "../../src/main/app-origin-policy.ts";
 import { CatalogService } from "../../src/main/catalog/catalog-service.ts";
@@ -120,20 +126,89 @@ describe("createGuiInvokeHandler", () => {
 		}
 	});
 
-	test("returns CommandNotImplemented for non-bootstrap commands", async () => {
+	test("returns CommandNotImplemented for deferred runtime mutation commands", async () => {
 		const eventBus = new RendererEventBus();
 		const handler = createGuiInvokeHandler({ app, mode: "test", policy, eventBus });
 
 		const result = await handler(
 			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender: createSender() },
-			{ _tag: "session.getTranscript", requestId: "request-1", sessionId: "session-1" },
+			new SessionCancelRun({
+				requestId: requestIdFromString("request-1"),
+				workspaceId: workspaceIdFromString("workspace-1"),
+				sessionId: sessionIdFromString("session-1"),
+			}),
 		);
 
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
 			expect(result.error._tag).toBe("CommandNotImplemented");
-			expect(result.error.message).toBe("session.getTranscript is not implemented in Phase 3");
+			expect(result.error.message).toBe("session.cancelRun is not implemented in Phase 4");
 		}
+	});
+
+	test("routes runtime session commands through the session supervisor", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const sessions: SessionCatalogSnapshot = {
+			workspaceId,
+			selectedSessionId: sessionId,
+			sessions: [
+				{
+					id: sessionId,
+					workspaceId,
+					title: "Session",
+					status: "ready",
+					updatedAt: "2026-06-18T00:00:00.000Z",
+					preview: "",
+					messageCount: 1,
+					sessionFilePath: "/tmp/session.jsonl",
+				},
+			],
+		};
+		const sessionSupervisor = {
+			closeSession: vi.fn(async () => undefined),
+			createSession: vi.fn(async () => sessions),
+			getTranscript: vi.fn(
+				async (): Promise<TimelineSnapshot> => ({
+					workspaceId,
+					sessionId,
+					entries: [{ id: "entry-1", kind: "user", text: "hello" }],
+				}),
+			),
+			openSession: vi.fn(async () => sessions),
+		};
+		const eventBus = new RendererEventBus();
+		const handler = createGuiInvokeHandler({
+			app,
+			eventBus,
+			mode: "test",
+			policy,
+			sessionSupervisor,
+		});
+		const sender = createSender();
+
+		const createResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new SessionCreate({ requestId: requestIdFromString("request-1"), workspaceId }),
+		);
+		const transcriptResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new SessionGetTranscript({ requestId: requestIdFromString("request-2"), workspaceId, sessionId }),
+		);
+		const closeResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new SessionClose({ requestId: requestIdFromString("request-3"), workspaceId, sessionId }),
+		);
+
+		expect(createResult).toMatchObject({ ok: true, data: sessions });
+		expect(transcriptResult).toMatchObject({
+			ok: true,
+			data: { workspaceId, sessionId, entries: [{ id: "entry-1", kind: "user", text: "hello" }] },
+		});
+		expect(closeResult).toMatchObject({ ok: true, data: undefined });
+		expect(sessionSupervisor.createSession).toHaveBeenCalledWith(workspaceId);
+		expect(sessionSupervisor.getTranscript).toHaveBeenCalledWith(workspaceId, sessionId);
+		expect(sessionSupervisor.closeSession).toHaveBeenCalledWith(workspaceId, sessionId);
 	});
 
 	test("automatically emits bootstrap receipt events to trusted renderer senders", async () => {

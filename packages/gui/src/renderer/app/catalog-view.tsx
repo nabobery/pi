@@ -1,6 +1,11 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import type { SessionCatalogSnapshot, SessionSnapshot, WorkspaceSnapshot } from "../../contracts/index.ts";
+import type {
+	SessionCatalogSnapshot,
+	SessionSnapshot,
+	TimelineSnapshot,
+	WorkspaceSnapshot,
+} from "../../contracts/index.ts";
 import type { GuiCatalogStore } from "./app-store.ts";
 
 export function WorkspaceSection({
@@ -113,7 +118,13 @@ export function SessionSection({
 	);
 }
 
-export function MainPane({ session }: { session: SessionSnapshot | undefined }) {
+export function MainPane({
+	session,
+	timeline,
+}: {
+	session: SessionSnapshot | undefined;
+	timeline: TimelineSnapshot | undefined;
+}) {
 	if (!session) {
 		return (
 			<div className="timeline">
@@ -139,8 +150,21 @@ export function MainPane({ session }: { session: SessionSnapshot | undefined }) 
 					<dd>{session.messageCount}</dd>
 				</div>
 			</dl>
-			<p className="empty-title">No transcript yet</p>
-			<p className="empty-copy">{session.sessionFilePath ?? "Session file path unavailable."}</p>
+			{timeline && timeline.entries.length > 0 ? (
+				<div className="transcript-list" role="log" aria-label="Transcript">
+					{timeline.entries.map((entry) => (
+						<article key={entry.id} className={`transcript-entry transcript-entry--${entry.kind}`}>
+							<p className="transcript-kind">{entry.kind}</p>
+							<p>{entry.text}</p>
+						</article>
+					))}
+				</div>
+			) : (
+				<>
+					<p className="empty-title">No transcript yet</p>
+					<p className="empty-copy">{session.sessionFilePath ?? "Session file path unavailable."}</p>
+				</>
+			)}
 		</div>
 	);
 }

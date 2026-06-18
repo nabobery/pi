@@ -272,6 +272,47 @@ button:not(:disabled) {
 	font-weight: 650;
 }
 
+.transcript-list {
+	display: grid;
+	gap: 10px;
+	width: min(780px, 100%);
+	margin: 0 auto;
+}
+
+.transcript-entry {
+	display: grid;
+	gap: 6px;
+	border-left: 3px solid #c8c7bd;
+	background: #ffffff;
+	padding: 12px 14px;
+}
+
+.transcript-entry--assistant {
+	border-left-color: #6e8f7a;
+}
+
+.transcript-entry--tool {
+	border-left-color: #8573a8;
+}
+
+.transcript-entry--system {
+	border-left-color: #a88163;
+}
+
+.transcript-entry p {
+	margin: 0;
+	line-height: 1.5;
+	white-space: pre-wrap;
+}
+
+.transcript-kind {
+	color: #77746a;
+	font-size: 11px;
+	font-weight: 650;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
 .empty-title {
 	margin: 0;
 	font-size: 18px;

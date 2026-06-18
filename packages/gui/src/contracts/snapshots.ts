@@ -20,7 +20,7 @@ export const WorkspaceSnapshot = Schema.Struct({
 });
 export type WorkspaceSnapshot = Schema.Schema.Type<typeof WorkspaceSnapshot>;
 
-export const SessionStatus = Schema.Literal("idle", "opening", "ready", "running", "failed", "closed");
+export const SessionStatus = Schema.Literal("idle", "opening", "ready", "replacing", "running", "failed", "closed");
 export type SessionStatus = Schema.Schema.Type<typeof SessionStatus>;
 
 export const SessionSnapshot = Schema.Struct({
@@ -37,6 +37,7 @@ export const SessionSnapshot = Schema.Struct({
 export type SessionSnapshot = Schema.Schema.Type<typeof SessionSnapshot>;
 
 export const TimelineSnapshot = Schema.Struct({
+	workspaceId: WorkspaceId,
 	sessionId: SessionId,
 	entries: Schema.Array(
 		Schema.Struct({
@@ -47,6 +48,8 @@ export const TimelineSnapshot = Schema.Struct({
 	),
 });
 export type TimelineSnapshot = Schema.Schema.Type<typeof TimelineSnapshot>;
+export const decodeTimelineSnapshot = (value: unknown): Promise<TimelineSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(TimelineSnapshot)(value));
 
 export const ModelThinkingSnapshot = Schema.Struct({
 	provider: Schema.optional(Schema.String),

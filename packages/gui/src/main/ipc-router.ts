@@ -10,8 +10,10 @@ import {
 	InternalIpcError,
 	ReceiptEmitted,
 	SessionArchive,
+	SessionClose,
 	SessionCatalogUpdated,
 	SessionCreate,
+	SessionGetTranscript,
 	SessionOpen,
 	SessionRename,
 	SessionSelected,
@@ -34,6 +36,9 @@ import type { AppOriginPolicy } from "./app-origin-policy.ts";
 import { createAppInfo } from "./app-info.ts";
 import { isAllowedAppUrl } from "./app-origin-policy.ts";
 import { CatalogService } from "./catalog/catalog-service.ts";
+import { PiSdkSessionDriver } from "./session/pi-sdk-session-driver.ts";
+import { RuntimeSupervisor } from "./session/runtime-supervisor.ts";
+import { SessionSupervisor } from "./session/session-supervisor.ts";
 
 export interface GuiIpcInvokeEvent {
 	senderFrame: { url: string } | null;
@@ -47,6 +52,7 @@ export interface CreateGuiInvokeHandlerOptions {
 	mode: string | undefined;
 	pickWorkspaceDirectory?: () => Promise<string | undefined>;
 	policy: AppOriginPolicy;
+	sessionSupervisor?: Pick<SessionSupervisor, "closeSession" | "createSession" | "getTranscript" | "openSession">;
 }
 
 type RendererEventSender = Pick<WebContents, "id" | "isDestroyed" | "once" | "send">;
@@ -108,9 +114,16 @@ export function createGuiInvokeHandler(options: CreateGuiInvokeHandlerOptions) {
 
 export function registerGuiIpcHandlers(app: App, mode: string | undefined, policy: AppOriginPolicy): RendererEventBus {
 	const eventBus = new RendererEventBus();
+	const catalogService = new CatalogService();
+	const runtimeSupervisor = new RuntimeSupervisor();
+	const sessionSupervisor = new SessionSupervisor({
+		catalogService,
+		driver: new PiSdkSessionDriver({ runtimeSupervisor }),
+		eventBus,
+	});
 	const handler = createGuiInvokeHandler({
 		app,
-		catalogService: new CatalogService(),
+		catalogService,
 		eventBus,
 		mode,
 		pickWorkspaceDirectory: async () => {
@@ -118,6 +131,7 @@ export function registerGuiIpcHandlers(app: App, mode: string | undefined, polic
 			return result.canceled ? undefined : result.filePaths[0];
 		},
 		policy,
+		sessionSupervisor,
 	});
 
 	ipcMain.handle(PI_GUI_INVOKE_CHANNEL, (event: IpcMainInvokeEvent, payload: unknown) => handler(event, payload));
@@ -203,7 +217,9 @@ async function handleGuiCommand(
 		}
 
 		if (command instanceof SessionCreate) {
-			const sessions = await catalogService.createSession(command.workspaceId);
+			const sessions = options.sessionSupervisor
+				? await options.sessionSupervisor.createSession(command.workspaceId)
+				: await catalogService.createSession(command.workspaceId);
 			publishSessionCatalog(options.eventBus, sessions);
 			publishSelectedSession(options.eventBus, sessions);
 			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
@@ -211,11 +227,25 @@ async function handleGuiCommand(
 		}
 
 		if (command instanceof SessionOpen) {
-			const sessions = await catalogService.openSession(command.workspaceId, command.sessionId);
+			const sessions = options.sessionSupervisor
+				? await options.sessionSupervisor.openSession(command.workspaceId, command.sessionId)
+				: await catalogService.openSession(command.workspaceId, command.sessionId);
 			publishSessionCatalog(options.eventBus, sessions);
 			publishSelectedSession(options.eventBus, sessions);
 			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
 			return { ok: true, requestId: command.requestId, data: sessions };
+		}
+
+		if (command instanceof SessionClose && options.sessionSupervisor) {
+			await options.sessionSupervisor.closeSession(command.workspaceId, command.sessionId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
+		if (command instanceof SessionGetTranscript && options.sessionSupervisor) {
+			const timeline = await options.sessionSupervisor.getTranscript(command.workspaceId, command.sessionId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: timeline };
 		}
 
 		if (command instanceof SessionRename) {
@@ -243,7 +273,7 @@ async function handleGuiCommand(
 			command.requestId,
 			new CommandNotImplemented({
 				commandTag: command._tag,
-				message: `${command._tag} is not implemented in Phase 3`,
+				message: `${command._tag} is not implemented in Phase 4`,
 			}),
 		);
 	} catch (error) {

@@ -6,7 +6,10 @@
 		"noEmit": true,
 		"paths": {
 			"@earendil-works/pi-agent-core": ["../agent/src/index.ts"],
-			"@earendil-works/pi-ai": ["../ai/src/index.ts"]
+			"@earendil-works/pi-ai": ["../ai/src/index.ts"],
+			"@earendil-works/pi-ai/oauth": ["../ai/src/oauth.ts"],
+			"@earendil-works/pi-coding-agent/runtime": ["../coding-agent/src/runtime.ts"],
+			"@earendil-works/pi-tui": ["../tui/src/index.ts"]
 		},
 		"plugins": [{ "name": "@effect/language-service" }],
 		"rootDir": ".",

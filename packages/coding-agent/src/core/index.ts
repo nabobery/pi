@@ -2,6 +2,7 @@
  * Core modules shared between all run modes.
  */
 
+export { getAgentDir } from "../config.ts";
 export {
 	AgentSession,
 	type AgentSessionConfig,
@@ -75,4 +76,5 @@ export {
 	type TurnStartEvent,
 	type WorkingIndicatorOptions,
 } from "./extensions/index.ts";
+export { SessionManager } from "./session-manager.ts";
 export { createSyntheticSourceInfo } from "./source-info.ts";

@@ -56,6 +56,17 @@ function ReadyApp({ api, loadState }: { api: RendererCatalogApi; loadState: Extr
 	const selectedWorkspace = state.workspaceCatalog.workspaces.find((workspace) => workspace.selected);
 	const sessionCatalog = selectedWorkspace ? state.sessionCatalogs[selectedWorkspace.id] : undefined;
 	const selectedSession = sessionCatalog?.sessions.find((session) => session.id === sessionCatalog.selectedSessionId);
+	const selectedTimeline =
+		selectedWorkspace && selectedSession
+			? state.timelines[`${selectedWorkspace.id}:${selectedSession.id}`]
+			: undefined;
+
+	useEffect(() => {
+		if (!selectedWorkspace || !selectedSession) return;
+		if (selectedSession.status !== "ready") return;
+		if (selectedTimeline) return;
+		void store.getTranscript(selectedWorkspace.id, selectedSession.id);
+	}, [selectedSession, selectedTimeline, selectedWorkspace, store]);
 
 	return (
 		<main className="app-shell">
@@ -87,7 +98,7 @@ function ReadyApp({ api, loadState }: { api: RendererCatalogApi; loadState: Extr
 						{loadState.appInfo.name} {loadState.appInfo.version}
 					</p>
 				</header>
-				<MainPane session={selectedSession} />
+				<MainPane session={selectedSession} timeline={selectedTimeline} />
 				<footer className="composer" aria-label="Composer">
 					<textarea data-testid="composer-input" placeholder="No transcript loaded." disabled />
 					<div className="composer-status">

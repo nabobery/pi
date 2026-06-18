@@ -59,6 +59,7 @@ export class SessionOpened extends Schema.TaggedClass<SessionOpened>()("session.
 
 export class SessionClosed extends Schema.TaggedClass<SessionClosed>()("session.closed", {
 	...EventBaseFields,
+	workspaceId: WorkspaceId,
 	sessionId: SessionId,
 }) {}
 

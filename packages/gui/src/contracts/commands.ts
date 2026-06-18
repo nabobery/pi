@@ -80,25 +80,31 @@ export class SessionUnarchive extends Schema.TaggedRequest<SessionUnarchive>()("
 export class SessionClose extends Schema.TaggedRequest<SessionClose>()("session.close", {
 	failure: GuiError,
 	success: VoidSuccess,
-	payload: { requestId: RequestId, sessionId: SessionId },
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
 }) {}
 
 export class SessionSendMessage extends Schema.TaggedRequest<SessionSendMessage>()("session.sendMessage", {
 	failure: GuiError,
 	success: VoidSuccess,
-	payload: { requestId: RequestId, sessionId: SessionId, message: Schema.String },
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId, message: Schema.String },
 }) {}
 
 export class SessionCancelRun extends Schema.TaggedRequest<SessionCancelRun>()("session.cancelRun", {
 	failure: GuiError,
 	success: VoidSuccess,
-	payload: { requestId: RequestId, sessionId: SessionId },
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
 }) {}
 
 export class SessionSetModel extends Schema.TaggedRequest<SessionSetModel>()("session.setModel", {
 	failure: GuiError,
 	success: VoidSuccess,
-	payload: { requestId: RequestId, sessionId: SessionId, provider: Schema.String, modelId: Schema.String },
+	payload: {
+		requestId: RequestId,
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		provider: Schema.String,
+		modelId: Schema.String,
+	},
 }) {}
 
 export class SessionSetThinkingLevel extends Schema.TaggedRequest<SessionSetThinkingLevel>()(
@@ -106,14 +112,14 @@ export class SessionSetThinkingLevel extends Schema.TaggedRequest<SessionSetThin
 	{
 		failure: GuiError,
 		success: VoidSuccess,
-		payload: { requestId: RequestId, sessionId: SessionId, thinkingLevel: Schema.String },
+		payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId, thinkingLevel: Schema.String },
 	},
 ) {}
 
 export class SessionGetTranscript extends Schema.TaggedRequest<SessionGetTranscript>()("session.getTranscript", {
 	failure: GuiError,
 	success: TimelineSnapshot,
-	payload: { requestId: RequestId, sessionId: SessionId },
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
 }) {}
 
 export class ExtensionUiRespond extends Schema.TaggedRequest<ExtensionUiRespond>()("extensionUi.respond", {

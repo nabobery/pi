@@ -5,7 +5,10 @@ export default defineConfig({
 	resolve: {
 		alias: {
 			"@earendil-works/pi-agent-core": resolve(import.meta.dirname, "../agent/src/index.ts"),
+			"@earendil-works/pi-ai/oauth": resolve(import.meta.dirname, "../ai/src/oauth.ts"),
 			"@earendil-works/pi-ai": resolve(import.meta.dirname, "../ai/src/index.ts"),
+			"@earendil-works/pi-coding-agent/runtime": resolve(import.meta.dirname, "../coding-agent/src/runtime.ts"),
+			"@earendil-works/pi-tui": resolve(import.meta.dirname, "../tui/src/index.ts"),
 		},
 	},
 	test: {
