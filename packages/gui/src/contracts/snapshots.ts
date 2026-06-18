@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import { GuiError } from "./errors.ts";
 import { CatalogRevision, ExtensionUiRequestId, RunId, SessionId, WorkspaceId } from "./ids.ts";
 
 export const AppInfoSnapshot = Schema.Struct({
@@ -12,6 +13,10 @@ export const WorkspaceSnapshot = Schema.Struct({
 	id: WorkspaceId,
 	path: Schema.String,
 	name: Schema.String,
+	lastOpenedAt: Schema.String,
+	sortOrder: Schema.Number,
+	missing: Schema.Boolean,
+	selected: Schema.optional(Schema.Boolean),
 });
 export type WorkspaceSnapshot = Schema.Schema.Type<typeof WorkspaceSnapshot>;
 
@@ -23,6 +28,11 @@ export const SessionSnapshot = Schema.Struct({
 	workspaceId: WorkspaceId,
 	title: Schema.String,
 	status: SessionStatus,
+	updatedAt: Schema.String,
+	preview: Schema.String,
+	messageCount: Schema.Number,
+	sessionFilePath: Schema.optional(Schema.String),
+	archivedAt: Schema.optional(Schema.String),
 });
 export type SessionSnapshot = Schema.Schema.Type<typeof SessionSnapshot>;
 
@@ -61,6 +71,8 @@ export type ExtensionUiRequestSnapshot = Schema.Schema.Type<typeof ExtensionUiRe
 
 export const BootstrapSnapshot = Schema.Struct({
 	appInfo: AppInfoSnapshot,
+	workspaceCatalog: Schema.optional(Schema.suspend(() => WorkspaceCatalogSnapshot)),
+	warnings: Schema.optional(Schema.Array(GuiError)),
 });
 export type BootstrapSnapshot = Schema.Schema.Type<typeof BootstrapSnapshot>;
 export const decodeBootstrapSnapshot = (value: unknown): Promise<BootstrapSnapshot> =>
@@ -68,9 +80,21 @@ export const decodeBootstrapSnapshot = (value: unknown): Promise<BootstrapSnapsh
 
 export const WorkspaceCatalogSnapshot = Schema.Struct({
 	revision: CatalogRevision,
+	selectedWorkspaceId: Schema.optional(WorkspaceId),
 	workspaces: Schema.Array(WorkspaceSnapshot),
 });
 export type WorkspaceCatalogSnapshot = Schema.Schema.Type<typeof WorkspaceCatalogSnapshot>;
+export const decodeWorkspaceCatalogSnapshot = (value: unknown): Promise<WorkspaceCatalogSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(WorkspaceCatalogSnapshot)(value));
+
+export const SessionCatalogSnapshot = Schema.Struct({
+	workspaceId: WorkspaceId,
+	selectedSessionId: Schema.optional(SessionId),
+	sessions: Schema.Array(SessionSnapshot),
+});
+export type SessionCatalogSnapshot = Schema.Schema.Type<typeof SessionCatalogSnapshot>;
+export const decodeSessionCatalogSnapshot = (value: unknown): Promise<SessionCatalogSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(SessionCatalogSnapshot)(value));
 
 export const RunSnapshot = Schema.Struct({
 	id: RunId,

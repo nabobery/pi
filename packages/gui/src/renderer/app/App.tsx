@@ -1,20 +1,28 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import {
+	createGuiCatalogStore,
+	createValidatedRendererCatalogApi,
+	useCatalogStore,
+	type RendererCatalogApi,
+} from "./app-store.ts";
 import { loadBootstrapState, type LoadState } from "./bootstrap-loader.ts";
+import { MainPane, SessionSection, WorkspaceSection } from "./catalog-view.tsx";
 
 export function App() {
 	const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
+	const api = useMemo(() => createValidatedRendererCatalogApi(window.piGui), []);
 
 	useEffect(() => {
 		let isMounted = true;
 
-		void loadBootstrapState(window.piGui).then((nextLoadState) => {
+		void loadBootstrapState(api).then((nextLoadState) => {
 			if (isMounted) setLoadState(nextLoadState);
 		});
 
 		return () => {
 			isMounted = false;
 		};
-	}, []);
+	}, [api]);
 
 	if (loadState.status === "loading") {
 		return (
@@ -36,6 +44,19 @@ export function App() {
 		);
 	}
 
+	return <ReadyApp api={api} loadState={loadState} />;
+}
+
+function ReadyApp({ api, loadState }: { api: RendererCatalogApi; loadState: Extract<LoadState, { status: "ready" }> }) {
+	const store = useMemo(
+		() => createGuiCatalogStore(api, loadState.workspaceCatalog, { initialError: loadState.warnings[0]?.message }),
+		[api, loadState.workspaceCatalog, loadState.warnings],
+	);
+	const state = useCatalogStore(store);
+	const selectedWorkspace = state.workspaceCatalog.workspaces.find((workspace) => workspace.selected);
+	const sessionCatalog = selectedWorkspace ? state.sessionCatalogs[selectedWorkspace.id] : undefined;
+	const selectedSession = sessionCatalog?.sessions.find((session) => session.id === sessionCatalog.selectedSessionId);
+
 	return (
 		<main className="app-shell">
 			<aside className="sidebar" aria-label="Workspace and sessions">
@@ -43,31 +64,32 @@ export function App() {
 					<p className="eyebrow">Pi</p>
 					<h1>Pi</h1>
 				</div>
-				<div className="sidebar-section">
-					<p className="section-label">Workspace</p>
-					<p className="empty-copy">No workspace open.</p>
-				</div>
-				<div className="sidebar-section">
-					<p className="section-label">Sessions</p>
-					<p className="empty-copy">Sessions will appear here.</p>
-				</div>
+				<WorkspaceSection
+					store={store}
+					workspaces={state.workspaceCatalog.workspaces}
+					selectedWorkspace={selectedWorkspace}
+				/>
+				<SessionSection
+					store={store}
+					pending={state.pending}
+					selectedWorkspace={selectedWorkspace}
+					sessionCatalog={sessionCatalog}
+				/>
+				{state.error ? <p className="inline-error">{state.error}</p> : null}
 			</aside>
 			<section className="main-region" aria-label="Session timeline">
 				<header className="timeline-header">
 					<div>
-						<p className="eyebrow">Desktop shell</p>
-						<h2>Ready</h2>
+						<p className="eyebrow">{selectedWorkspace?.name ?? "Desktop shell"}</p>
+						<h2>{selectedSession?.title ?? "No active session"}</h2>
 					</div>
 					<p className="app-version">
 						{loadState.appInfo.name} {loadState.appInfo.version}
 					</p>
 				</header>
-				<div className="timeline">
-					<p className="empty-title">No active session</p>
-					<p className="empty-copy">Phase 1 only proves the shell, preload bridge, and secure renderer.</p>
-				</div>
+				<MainPane session={selectedSession} />
 				<footer className="composer" aria-label="Composer">
-					<textarea data-testid="composer-input" placeholder="Pi runtime arrives in Phase 2." disabled />
+					<textarea data-testid="composer-input" placeholder="No transcript loaded." disabled />
 					<div className="composer-status">
 						<span>Mode: {loadState.appInfo.mode}</span>
 						<button type="button" disabled>

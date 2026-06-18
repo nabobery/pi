@@ -3,6 +3,7 @@ import { GuiError } from "./errors.ts";
 import { EventId, RequestId, RunId, SessionId, WorkspaceId } from "./ids.ts";
 import {
 	ExtensionUiRequestSnapshot,
+	SessionCatalogSnapshot,
 	SessionSnapshot,
 	TimelineSnapshot,
 	WorkspaceCatalogSnapshot,
@@ -33,10 +34,22 @@ export class WorkspaceCatalogUpdated extends Schema.TaggedClass<WorkspaceCatalog
 	catalog: WorkspaceCatalogSnapshot,
 }) {}
 
+export class WorkspaceSynced extends Schema.TaggedClass<WorkspaceSynced>()("workspace.synced", {
+	...EventBaseFields,
+	workspaceId: WorkspaceId,
+	sessions: SessionCatalogSnapshot,
+}) {}
+
 export class SessionCatalogUpdated extends Schema.TaggedClass<SessionCatalogUpdated>()("session.catalogUpdated", {
 	...EventBaseFields,
 	workspaceId: WorkspaceId,
 	sessions: Schema.Array(SessionSnapshot),
+}) {}
+
+export class SessionSelected extends Schema.TaggedClass<SessionSelected>()("session.selected", {
+	...EventBaseFields,
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
 }) {}
 
 export class SessionOpened extends Schema.TaggedClass<SessionOpened>()("session.opened", {
@@ -132,7 +145,9 @@ export const GuiEvent = Schema.Union(
 	AppError,
 	ReceiptEmitted,
 	WorkspaceCatalogUpdated,
+	WorkspaceSynced,
 	SessionCatalogUpdated,
+	SessionSelected,
 	SessionOpened,
 	SessionClosed,
 	SessionStatusChanged,

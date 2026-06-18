@@ -1,6 +1,13 @@
+import { resolve } from "node:path";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+	resolve: {
+		alias: {
+			"@earendil-works/pi-agent-core": resolve(import.meta.dirname, "../agent/src/index.ts"),
+			"@earendil-works/pi-ai": resolve(import.meta.dirname, "../ai/src/index.ts"),
+		},
+	},
 	test: {
 		include: ["test/**/*.test.ts"],
 		environment: "node",

@@ -1,4 +1,4 @@
-import { type App, type IpcMainInvokeEvent, ipcMain, type WebContents } from "electron";
+import { type App, dialog, type IpcMainInvokeEvent, ipcMain, type WebContents } from "electron";
 import {
 	AppBootstrap,
 	CommandNotImplemented,
@@ -7,8 +7,24 @@ import {
 	type GuiError,
 	type GuiEvent,
 	InvalidRendererCommand,
+	InternalIpcError,
 	ReceiptEmitted,
+	SessionArchive,
+	SessionCatalogUpdated,
+	SessionCreate,
+	SessionOpen,
+	SessionRename,
+	SessionSelected,
+	SessionUnarchive,
 	UnauthorizedIpcSender,
+	WorkspaceAdd,
+	WorkspaceCatalogUpdated,
+	WorkspacePickDirectory,
+	WorkspaceRemove,
+	WorkspaceSelect,
+	WorkspaceSync,
+	WorkspaceSynced,
+	decodeGuiError,
 	decodeGuiCommand,
 	eventIdFromString,
 	requestIdFromString,
@@ -17,6 +33,7 @@ import { PI_GUI_EVENT_CHANNEL, PI_GUI_INVOKE_CHANNEL } from "../shared/contracts
 import type { AppOriginPolicy } from "./app-origin-policy.ts";
 import { createAppInfo } from "./app-info.ts";
 import { isAllowedAppUrl } from "./app-origin-policy.ts";
+import { CatalogService } from "./catalog/catalog-service.ts";
 
 export interface GuiIpcInvokeEvent {
 	senderFrame: { url: string } | null;
@@ -25,8 +42,10 @@ export interface GuiIpcInvokeEvent {
 
 export interface CreateGuiInvokeHandlerOptions {
 	app: Pick<App, "getName" | "getVersion">;
+	catalogService?: CatalogService;
 	eventBus: RendererEventBus;
 	mode: string | undefined;
+	pickWorkspaceDirectory?: () => Promise<string | undefined>;
 	policy: AppOriginPolicy;
 }
 
@@ -49,16 +68,15 @@ export class RendererEventBus {
 	publishReceipt(requestId: string, receipt: string): void {
 		this.publish(
 			new ReceiptEmitted({
-				eventId: eventIdFromString(`event-${this.sequence + 1}`),
-				sequence: this.sequence + 1,
+				...this.nextEventBase(),
 				receipt,
 				requestId: requestIdFromString(requestId),
 			}),
 		);
 	}
 
-	private publish(event: GuiEvent): void {
-		this.sequence += 1;
+	publish(event: GuiEvent): void {
+		this.sequence = event.sequence;
 		for (const [senderId, sender] of this.senders) {
 			if (sender.isDestroyed()) {
 				this.senders.delete(senderId);
@@ -66,6 +84,11 @@ export class RendererEventBus {
 			}
 			sender.send(PI_GUI_EVENT_CHANNEL, event);
 		}
+	}
+
+	nextEventBase(): { eventId: ReturnType<typeof eventIdFromString>; sequence: number } {
+		const sequence = this.sequence + 1;
+		return { eventId: eventIdFromString(`event-${sequence}`), sequence };
 	}
 }
 
@@ -85,7 +108,17 @@ export function createGuiInvokeHandler(options: CreateGuiInvokeHandlerOptions) {
 
 export function registerGuiIpcHandlers(app: App, mode: string | undefined, policy: AppOriginPolicy): RendererEventBus {
 	const eventBus = new RendererEventBus();
-	const handler = createGuiInvokeHandler({ app, eventBus, mode, policy });
+	const handler = createGuiInvokeHandler({
+		app,
+		catalogService: new CatalogService(),
+		eventBus,
+		mode,
+		pickWorkspaceDirectory: async () => {
+			const result = await dialog.showOpenDialog({ properties: ["openDirectory"] });
+			return result.canceled ? undefined : result.filePaths[0];
+		},
+		policy,
+	});
 
 	ipcMain.handle(PI_GUI_INVOKE_CHANNEL, (event: IpcMainInvokeEvent, payload: unknown) => handler(event, payload));
 
@@ -103,21 +136,123 @@ async function decodeCommand(payload: unknown): Promise<GuiCommand | InvalidRend
 	}
 }
 
-function handleGuiCommand(command: GuiCommand, options: CreateGuiInvokeHandlerOptions): GuiCommandResult {
+async function handleGuiCommand(
+	command: GuiCommand,
+	options: CreateGuiInvokeHandlerOptions,
+): Promise<GuiCommandResult> {
+	const catalogService = options.catalogService ?? new CatalogService();
+
 	if (command instanceof AppBootstrap) {
 		options.eventBus.publishReceipt(command.requestId, "app.bootstrap.accepted");
-		const data = { appInfo: createAppInfo(options.app, options.mode) };
+		const workspaceCatalog = await catalogService.getWorkspaceCatalog();
+		const startupWarning = catalogService.getStartupWarning();
+		const data = {
+			appInfo: createAppInfo(options.app, options.mode),
+			workspaceCatalog,
+			...(startupWarning ? { warnings: [startupWarning] } : {}),
+		};
 		options.eventBus.publishReceipt(command.requestId, "app.bootstrap.completed");
 		return { ok: true, requestId: command.requestId, data };
 	}
 
-	return failureResult(
-		command.requestId,
-		new CommandNotImplemented({
-			commandTag: command._tag,
-			message: `${command._tag} is not implemented in Phase 2`,
-		}),
-	);
+	options.eventBus.publishReceipt(command.requestId, `${command._tag}.accepted`);
+
+	try {
+		if (command instanceof WorkspaceAdd) {
+			const catalog = await catalogService.addWorkspace(command.path);
+			publishWorkspaceCatalog(options.eventBus, catalog);
+			await publishSelectedWorkspaceSessions(options.eventBus, catalogService, catalog.selectedWorkspaceId, true);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: catalog };
+		}
+
+		if (command instanceof WorkspacePickDirectory) {
+			const selectedPath = await options.pickWorkspaceDirectory?.();
+			const catalog = selectedPath
+				? await catalogService.addWorkspace(selectedPath)
+				: await catalogService.getWorkspaceCatalog();
+			publishWorkspaceCatalog(options.eventBus, catalog);
+			if (selectedPath) {
+				await publishSelectedWorkspaceSessions(options.eventBus, catalogService, catalog.selectedWorkspaceId, true);
+			}
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: catalog };
+		}
+
+		if (command instanceof WorkspaceSelect) {
+			const catalog = await catalogService.selectWorkspace(command.workspaceId);
+			publishWorkspaceCatalog(options.eventBus, catalog);
+			await publishSelectedWorkspaceSessions(options.eventBus, catalogService, catalog.selectedWorkspaceId, false);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: catalog };
+		}
+
+		if (command instanceof WorkspaceSync) {
+			const sessions = await catalogService.syncWorkspace(command.workspaceId);
+			publishSessionCatalog(options.eventBus, sessions);
+			publishWorkspaceSynced(options.eventBus, command.workspaceId, sessions);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: sessions };
+		}
+
+		if (command instanceof WorkspaceRemove) {
+			const catalog = await catalogService.removeWorkspace(command.workspaceId);
+			publishWorkspaceCatalog(options.eventBus, catalog);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: catalog };
+		}
+
+		if (command instanceof SessionCreate) {
+			const sessions = await catalogService.createSession(command.workspaceId);
+			publishSessionCatalog(options.eventBus, sessions);
+			publishSelectedSession(options.eventBus, sessions);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: sessions };
+		}
+
+		if (command instanceof SessionOpen) {
+			const sessions = await catalogService.openSession(command.workspaceId, command.sessionId);
+			publishSessionCatalog(options.eventBus, sessions);
+			publishSelectedSession(options.eventBus, sessions);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: sessions };
+		}
+
+		if (command instanceof SessionRename) {
+			const sessions = await catalogService.renameSession(command.workspaceId, command.sessionId, command.title);
+			publishSessionCatalog(options.eventBus, sessions);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: sessions };
+		}
+
+		if (command instanceof SessionArchive) {
+			const sessions = await catalogService.archiveSession(command.workspaceId, command.sessionId);
+			publishSessionCatalog(options.eventBus, sessions);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: sessions };
+		}
+
+		if (command instanceof SessionUnarchive) {
+			const sessions = await catalogService.unarchiveSession(command.workspaceId, command.sessionId);
+			publishSessionCatalog(options.eventBus, sessions);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: sessions };
+		}
+
+		return failureResult(
+			command.requestId,
+			new CommandNotImplemented({
+				commandTag: command._tag,
+				message: `${command._tag} is not implemented in Phase 3`,
+			}),
+		);
+	} catch (error) {
+		const guiError = await toGuiError(error);
+		if (guiError._tag === "WorkspacePathMissing") {
+			await publishCurrentWorkspaceCatalog(options.eventBus, catalogService);
+		}
+		return failureResult(command.requestId, guiError);
+	}
 }
 
 function validateSender(policy: AppOriginPolicy, event: GuiIpcInvokeEvent): UnauthorizedIpcSender | undefined {
@@ -145,4 +280,77 @@ function getRequestId(payload: unknown): string {
 function getErrorMessage(error: unknown): string {
 	if (error instanceof Error) return error.message;
 	return String(error);
+}
+
+function publishWorkspaceCatalog(
+	eventBus: RendererEventBus,
+	catalog: ConstructorParameters<typeof WorkspaceCatalogUpdated>[0]["catalog"],
+): void {
+	eventBus.publish(new WorkspaceCatalogUpdated({ ...eventBus.nextEventBase(), catalog }));
+}
+
+function publishSessionCatalog(
+	eventBus: RendererEventBus,
+	catalog: ConstructorParameters<typeof WorkspaceSynced>[0]["sessions"],
+): void {
+	eventBus.publish(
+		new SessionCatalogUpdated({
+			...eventBus.nextEventBase(),
+			workspaceId: catalog.workspaceId,
+			sessions: catalog.sessions,
+		}),
+	);
+}
+
+function publishWorkspaceSynced(
+	eventBus: RendererEventBus,
+	workspaceId: ConstructorParameters<typeof WorkspaceSynced>[0]["workspaceId"],
+	sessions: ConstructorParameters<typeof WorkspaceSynced>[0]["sessions"],
+): void {
+	eventBus.publish(new WorkspaceSynced({ ...eventBus.nextEventBase(), workspaceId, sessions }));
+}
+
+function publishSelectedSession(
+	eventBus: RendererEventBus,
+	catalog: ConstructorParameters<typeof WorkspaceSynced>[0]["sessions"],
+): void {
+	if (!catalog.selectedSessionId) return;
+	eventBus.publish(
+		new SessionSelected({
+			...eventBus.nextEventBase(),
+			workspaceId: catalog.workspaceId,
+			sessionId: catalog.selectedSessionId,
+		}),
+	);
+}
+
+async function publishSelectedWorkspaceSessions(
+	eventBus: RendererEventBus,
+	catalogService: CatalogService,
+	workspaceId: ConstructorParameters<typeof WorkspaceSynced>[0]["workspaceId"] | undefined,
+	emitSynced: boolean,
+): Promise<void> {
+	if (!workspaceId) return;
+	const sessions = await catalogService.getSessionCatalog(workspaceId);
+	publishSessionCatalog(eventBus, sessions);
+	if (emitSynced) publishWorkspaceSynced(eventBus, workspaceId, sessions);
+}
+
+async function publishCurrentWorkspaceCatalog(
+	eventBus: RendererEventBus,
+	catalogService: CatalogService,
+): Promise<void> {
+	try {
+		publishWorkspaceCatalog(eventBus, await catalogService.getWorkspaceCatalog());
+	} catch {
+		return;
+	}
+}
+
+async function toGuiError(error: unknown): Promise<GuiError> {
+	try {
+		return await decodeGuiError(error);
+	} catch {
+		return new InternalIpcError({ message: "Unhandled GUI IPC error", cause: getErrorMessage(error) });
+	}
 }

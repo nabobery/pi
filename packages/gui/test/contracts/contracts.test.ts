@@ -2,16 +2,27 @@ import { describe, expect, test } from "vitest";
 import {
 	AppBootstrap,
 	AppReady,
+	BootstrapSnapshot,
+	CatalogParseFailed,
 	CommandNotImplemented,
+	InvalidWorkspacePath,
 	GuiCommand,
 	GuiError,
 	GuiEvent,
 	ReceiptEmitted,
+	SessionArchive,
+	SessionCatalogSnapshot,
+	SessionRename,
+	SessionSelected,
+	WorkspacePickDirectory,
+	WorkspaceRemove,
+	WorkspaceSynced,
 	decodeGuiCommand,
 	decodeGuiError,
 	decodeGuiEvent,
 	eventIdFromString,
 	requestIdFromString,
+	sessionIdFromString,
 	workspaceIdFromString,
 } from "../../src/contracts/index.ts";
 
@@ -21,6 +32,39 @@ describe("gui contracts", () => {
 
 		expect(command).toBeInstanceOf(AppBootstrap);
 		expect(command.requestId).toBe("request-1");
+	});
+
+	test("decodes phase 3 workspace and session commands", async () => {
+		await expect(
+			decodeGuiCommand(new WorkspacePickDirectory({ requestId: requestIdFromString("request-2") })),
+		).resolves.toBeInstanceOf(WorkspacePickDirectory);
+		await expect(
+			decodeGuiCommand(
+				new WorkspaceRemove({
+					requestId: requestIdFromString("request-3"),
+					workspaceId: workspaceIdFromString("workspace-1"),
+				}),
+			),
+		).resolves.toBeInstanceOf(WorkspaceRemove);
+		await expect(
+			decodeGuiCommand(
+				new SessionRename({
+					requestId: requestIdFromString("request-4"),
+					workspaceId: workspaceIdFromString("workspace-1"),
+					sessionId: sessionIdFromString("session-1"),
+					title: "Renamed",
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionRename);
+		await expect(
+			decodeGuiCommand(
+				new SessionArchive({
+					requestId: requestIdFromString("request-5"),
+					workspaceId: workspaceIdFromString("workspace-1"),
+					sessionId: sessionIdFromString("session-1"),
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionArchive);
 	});
 
 	test("rejects commands with unknown tags", async () => {
@@ -55,6 +99,35 @@ describe("gui contracts", () => {
 		expect(event.sequence).toBe(1);
 	});
 
+	test("decodes phase 3 catalog events", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		await expect(
+			decodeGuiEvent(
+				new WorkspaceSynced({
+					eventId: eventIdFromString("event-2"),
+					sequence: 2,
+					workspaceId,
+					sessions: {
+						workspaceId,
+						selectedSessionId: sessionId,
+						sessions: [],
+					},
+				}),
+			),
+		).resolves.toBeInstanceOf(WorkspaceSynced);
+		await expect(
+			decodeGuiEvent(
+				new SessionSelected({
+					eventId: eventIdFromString("event-3"),
+					sequence: 3,
+					workspaceId,
+					sessionId,
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionSelected);
+	});
+
 	test("decodes error serialization", async () => {
 		const error = await decodeGuiError(
 			new CommandNotImplemented({
@@ -65,6 +138,61 @@ describe("gui contracts", () => {
 
 		expect(error).toBeInstanceOf(CommandNotImplemented);
 		expect(error._tag).toBe("CommandNotImplemented");
+	});
+
+	test("decodes phase 3 catalog errors", async () => {
+		const error = await decodeGuiError(
+			new InvalidWorkspacePath({
+				path: "/missing/project",
+				message: "Workspace path does not exist",
+			}),
+		);
+
+		expect(error).toBeInstanceOf(InvalidWorkspacePath);
+		expect(error._tag).toBe("InvalidWorkspacePath");
+	});
+
+	test("decodes session catalog snapshots", () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		expect(
+			SessionCatalogSnapshot.make({
+				workspaceId,
+				selectedSessionId: sessionId,
+				sessions: [
+					{
+						id: sessionId,
+						workspaceId,
+						title: "Session one",
+						status: "idle",
+						updatedAt: "2026-06-18T00:00:00.000Z",
+						preview: "Preview",
+						messageCount: 2,
+						sessionFilePath: "/tmp/session.jsonl",
+					},
+				],
+			}),
+		).toMatchObject({ workspaceId, selectedSessionId: sessionId });
+	});
+
+	test("decodes bootstrap snapshots with warnings", () => {
+		expect(
+			BootstrapSnapshot.make({
+				appInfo: {
+					name: "Pi GUI",
+					version: "1.2.3",
+					mode: "test",
+				},
+				warnings: [
+					new CatalogParseFailed({
+						message: "Failed to parse GUI catalog",
+						backupPath: "/tmp/catalog.invalid",
+					}),
+				],
+			}),
+		).toMatchObject({
+			warnings: [expect.objectContaining({ _tag: "CatalogParseFailed" })],
+		});
 	});
 
 	test("exports command, event, and error union schemas", () => {

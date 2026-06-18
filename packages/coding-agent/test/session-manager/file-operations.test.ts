@@ -1,5 +1,15 @@
 import { constants as bufferConstants } from "buffer";
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from "fs";
+import {
+	appendFileSync,
+	closeSync,
+	existsSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+	writeSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -233,6 +243,75 @@ describe("SessionManager custom flat session directory", () => {
 
 		const continuedA = SessionManager.continueRecent(projectA, tempDir);
 		expect(continuedA.getSessionFile()).toBe(sessionA);
+	});
+});
+
+describe("SessionManager.ensureSessionFile", () => {
+	let tempDir: string;
+	let projectDir: string;
+
+	beforeEach(() => {
+		tempDir = join(tmpdir(), `session-test-${Date.now()}`);
+		projectDir = join(tempDir, "project");
+		mkdirSync(projectDir, { recursive: true });
+	});
+
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	it("writes a header-only file for new persisted sessions", () => {
+		const session = SessionManager.create(projectDir, tempDir);
+		const sessionFile = session.getSessionFile();
+
+		expect(sessionFile).toBeDefined();
+		expect(existsSync(sessionFile!)).toBe(false);
+
+		const ensuredFile = session.ensureSessionFile();
+
+		expect(ensuredFile).toBe(sessionFile);
+		expect(existsSync(sessionFile!)).toBe(true);
+		const lines = readFileSync(sessionFile!, "utf8").trim().split("\n");
+		expect(lines).toHaveLength(1);
+		expect(JSON.parse(lines[0]) as { type: string; id: string }).toMatchObject({
+			type: "session",
+			id: session.getSessionId(),
+		});
+	});
+
+	it("returns an existing session path without rewriting it", () => {
+		const session = SessionManager.create(projectDir, tempDir);
+		const sessionFile = session.ensureSessionFile();
+		expect(sessionFile).toBeDefined();
+		const before = readFileSync(sessionFile!, "utf8");
+
+		const ensuredAgain = session.ensureSessionFile();
+
+		expect(ensuredAgain).toBe(sessionFile);
+		expect(readFileSync(sessionFile!, "utf8")).toBe(before);
+	});
+
+	it("returns undefined for in-memory sessions", () => {
+		const session = SessionManager.inMemory(projectDir);
+
+		expect(session.ensureSessionFile()).toBeUndefined();
+	});
+
+	it("allows appended session info to persist after ensuring the file exists", () => {
+		const session = SessionManager.create(projectDir, tempDir);
+		const sessionFile = session.ensureSessionFile();
+		expect(sessionFile).toBeDefined();
+
+		session.appendSessionInfo("Renamed from GUI");
+
+		const entries = readFileSync(sessionFile!, "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as { type: string; name?: string });
+		expect(entries).toEqual([
+			expect.objectContaining({ type: "session" }),
+			expect.objectContaining({ type: "session_info", name: "Renamed from GUI" }),
+		]);
 	});
 });
 

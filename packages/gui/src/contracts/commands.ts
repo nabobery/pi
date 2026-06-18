@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect";
 import { GuiError } from "./errors.ts";
 import { ExtensionUiRequestId, RequestId, SessionId, WorkspaceId } from "./ids.ts";
-import { BootstrapSnapshot, TimelineSnapshot } from "./snapshots.ts";
+import { BootstrapSnapshot, SessionCatalogSnapshot, TimelineSnapshot, WorkspaceCatalogSnapshot } from "./snapshots.ts";
 
 const VoidSuccess = Schema.Void;
 
@@ -19,32 +19,62 @@ export class RendererReady extends Schema.TaggedRequest<RendererReady>()("app.re
 
 export class WorkspaceAdd extends Schema.TaggedRequest<WorkspaceAdd>()("workspace.add", {
 	failure: GuiError,
-	success: VoidSuccess,
+	success: WorkspaceCatalogSnapshot,
 	payload: { requestId: RequestId, path: Schema.String },
+}) {}
+
+export class WorkspacePickDirectory extends Schema.TaggedRequest<WorkspacePickDirectory>()("workspace.pickDirectory", {
+	failure: GuiError,
+	success: WorkspaceCatalogSnapshot,
+	payload: { requestId: RequestId },
 }) {}
 
 export class WorkspaceSelect extends Schema.TaggedRequest<WorkspaceSelect>()("workspace.select", {
 	failure: GuiError,
-	success: VoidSuccess,
+	success: WorkspaceCatalogSnapshot,
 	payload: { requestId: RequestId, workspaceId: WorkspaceId },
 }) {}
 
 export class WorkspaceSync extends Schema.TaggedRequest<WorkspaceSync>()("workspace.sync", {
 	failure: GuiError,
-	success: VoidSuccess,
+	success: SessionCatalogSnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId },
+}) {}
+
+export class WorkspaceRemove extends Schema.TaggedRequest<WorkspaceRemove>()("workspace.remove", {
+	failure: GuiError,
+	success: WorkspaceCatalogSnapshot,
 	payload: { requestId: RequestId, workspaceId: WorkspaceId },
 }) {}
 
 export class SessionCreate extends Schema.TaggedRequest<SessionCreate>()("session.create", {
 	failure: GuiError,
-	success: VoidSuccess,
+	success: SessionCatalogSnapshot,
 	payload: { requestId: RequestId, workspaceId: WorkspaceId },
 }) {}
 
 export class SessionOpen extends Schema.TaggedRequest<SessionOpen>()("session.open", {
 	failure: GuiError,
-	success: VoidSuccess,
-	payload: { requestId: RequestId, sessionId: SessionId },
+	success: SessionCatalogSnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
+}) {}
+
+export class SessionRename extends Schema.TaggedRequest<SessionRename>()("session.rename", {
+	failure: GuiError,
+	success: SessionCatalogSnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId, title: Schema.String },
+}) {}
+
+export class SessionArchive extends Schema.TaggedRequest<SessionArchive>()("session.archive", {
+	failure: GuiError,
+	success: SessionCatalogSnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
+}) {}
+
+export class SessionUnarchive extends Schema.TaggedRequest<SessionUnarchive>()("session.unarchive", {
+	failure: GuiError,
+	success: SessionCatalogSnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
 }) {}
 
 export class SessionClose extends Schema.TaggedRequest<SessionClose>()("session.close", {
@@ -96,10 +126,15 @@ export const GuiCommand = Schema.Union(
 	AppBootstrap,
 	RendererReady,
 	WorkspaceAdd,
+	WorkspacePickDirectory,
 	WorkspaceSelect,
 	WorkspaceSync,
+	WorkspaceRemove,
 	SessionCreate,
 	SessionOpen,
+	SessionRename,
+	SessionArchive,
+	SessionUnarchive,
 	SessionClose,
 	SessionSendMessage,
 	SessionCancelRun,

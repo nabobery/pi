@@ -905,6 +905,14 @@ export class SessionManager {
 		return this.sessionFile;
 	}
 
+	ensureSessionFile(): string | undefined {
+		if (!this.persist || !this.sessionFile) return undefined;
+		if (existsSync(this.sessionFile)) return this.sessionFile;
+		this._rewriteFile();
+		this.flushed = true;
+		return this.sessionFile;
+	}
+
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 

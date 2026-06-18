@@ -50,7 +50,7 @@ describe("createPiGuiApi", () => {
 		expect(unsubscribe).toHaveBeenCalledTimes(1);
 	});
 
-	test("does not deliver malformed event payloads to subscribers", async () => {
+	test("forwards event payloads to subscribers", () => {
 		let eventListener: ((event: unknown) => void) | undefined;
 		const invoke = vi.fn();
 		const on = vi.fn((_channel, listener: (event: unknown) => void) => {
@@ -62,13 +62,13 @@ describe("createPiGuiApi", () => {
 		const api = createPiGuiApi({ invoke, on });
 		api.subscribe(listener);
 
-		eventListener?.({ _tag: "receipt.emitted", eventId: "", sequence: 1, receipt: "bad", requestId: "request-1" });
-		await new Promise((resolve) => setTimeout(resolve, 0));
+		const event = { _tag: "receipt.emitted", eventId: "", sequence: 1, receipt: "bad", requestId: "request-1" };
+		eventListener?.(event);
 
-		expect(listener).not.toHaveBeenCalled();
+		expect(listener).toHaveBeenCalledWith(event);
 	});
 
-	test("decodes valid event payloads before delivering them to subscribers", async () => {
+	test("delivers valid event payloads unchanged", () => {
 		let eventListener: ((event: unknown) => void) | undefined;
 		const invoke = vi.fn();
 		const on = vi.fn((_channel, listener: (event: unknown) => void) => {
@@ -80,36 +80,24 @@ describe("createPiGuiApi", () => {
 		const api = createPiGuiApi({ invoke, on });
 		api.subscribe(listener);
 
-		eventListener?.(
-			new ReceiptEmitted({
-				eventId: eventIdFromString("event-1"),
-				sequence: 1,
-				receipt: "app.bootstrap.completed",
-				requestId: requestIdFromString("request-1"),
-			}),
-		);
-
-		await vi.waitFor(() => {
-			expect(listener).toHaveBeenCalledWith(
-				expect.objectContaining({ _tag: "receipt.emitted", receipt: "app.bootstrap.completed" }),
-			);
+		const event = new ReceiptEmitted({
+			eventId: eventIdFromString("event-1"),
+			sequence: 1,
+			receipt: "app.bootstrap.completed",
+			requestId: requestIdFromString("request-1"),
 		});
+		eventListener?.(event);
+
+		expect(listener).toHaveBeenCalledWith(event);
 	});
 
-	test("normalizes malformed invoke results into InternalIpcError envelopes", async () => {
+	test("returns invoke results unchanged", async () => {
 		const invoke = vi.fn().mockResolvedValue({ ok: true, requestId: "", data: {} });
 		const on = vi.fn();
 		const api = createPiGuiApi({ invoke, on });
 
 		const result = await api.invoke(new AppBootstrap({ requestId: requestIdFromString("request-1") }));
 
-		expect(result).toEqual({
-			ok: false,
-			requestId: "request-1",
-			error: expect.objectContaining({
-				_tag: "InternalIpcError",
-				message: "Invalid IPC response",
-			}),
-		});
+		expect(result).toEqual({ ok: true, requestId: "", data: {} });
 	});
 });

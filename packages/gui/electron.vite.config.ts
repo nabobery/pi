@@ -4,6 +4,12 @@ import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 
 export default defineConfig({
 	main: {
+		resolve: {
+			alias: {
+				"@earendil-works/pi-agent-core": resolve(import.meta.dirname, "../agent/src/index.ts"),
+				"@earendil-works/pi-ai": resolve(import.meta.dirname, "../ai/src/index.ts"),
+			},
+		},
 		plugins: [externalizeDepsPlugin()],
 		build: {
 			outDir: "dist/main",
@@ -13,6 +19,9 @@ export default defineConfig({
 		},
 	},
 	preload: {
+		ssr: {
+			noExternal: true,
+		},
 		build: {
 			outDir: "dist/preload",
 			rollupOptions: {
