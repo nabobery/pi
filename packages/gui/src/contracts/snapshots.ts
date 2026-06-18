@@ -20,7 +20,16 @@ export const WorkspaceSnapshot = Schema.Struct({
 });
 export type WorkspaceSnapshot = Schema.Schema.Type<typeof WorkspaceSnapshot>;
 
-export const SessionStatus = Schema.Literal("idle", "opening", "ready", "replacing", "running", "failed", "closed");
+export const SessionStatus = Schema.Literal(
+	"idle",
+	"opening",
+	"ready",
+	"replacing",
+	"running",
+	"cancelling",
+	"failed",
+	"closed",
+);
 export type SessionStatus = Schema.Schema.Type<typeof SessionStatus>;
 
 export const SessionSnapshot = Schema.Struct({
@@ -42,8 +51,12 @@ export const TimelineSnapshot = Schema.Struct({
 	entries: Schema.Array(
 		Schema.Struct({
 			id: Schema.String,
-			kind: Schema.Literal("user", "assistant", "tool", "system"),
+			kind: Schema.Literal("user", "assistant", "tool", "system", "error"),
 			text: Schema.String,
+			toolCallId: Schema.optional(Schema.String),
+			toolName: Schema.optional(Schema.String),
+			isLive: Schema.optional(Schema.Boolean),
+			isError: Schema.optional(Schema.Boolean),
 		}),
 	),
 });

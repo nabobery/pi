@@ -148,6 +148,35 @@ export class SessionTranscriptReadFailed extends Schema.TaggedError<SessionTrans
 	},
 ) {}
 
+export class SessionPromptRejected extends Schema.TaggedError<SessionPromptRejected>()("SessionPromptRejected", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class SessionPromptFailed extends Schema.TaggedError<SessionPromptFailed>()("SessionPromptFailed", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	runId: Schema.optional(Schema.String),
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class SessionCancelFailed extends Schema.TaggedError<SessionCancelFailed>()("SessionCancelFailed", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	runId: Schema.optional(Schema.String),
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class SessionRunNotActive extends Schema.TaggedError<SessionRunNotActive>()("SessionRunNotActive", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	message: Schema.String,
+}) {}
+
 export const GuiError = Schema.Union(
 	InvalidRendererCommand,
 	UnauthorizedIpcSender,
@@ -171,6 +200,10 @@ export const GuiError = Schema.Union(
 	SessionRuntimeBindFailed,
 	SessionAlreadyOpen,
 	SessionTranscriptReadFailed,
+	SessionPromptRejected,
+	SessionPromptFailed,
+	SessionCancelFailed,
+	SessionRunNotActive,
 );
 export type GuiError = Schema.Schema.Type<typeof GuiError>;
 

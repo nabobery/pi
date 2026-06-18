@@ -1,4 +1,5 @@
 export { getAgentDir } from "./config.ts";
+export type { AgentSessionEvent, PromptOptions } from "./core/agent-session.ts";
 export {
 	AgentSessionRuntime,
 	type CreateAgentSessionRuntimeFactory,

@@ -1,9 +1,20 @@
 import { describe, expect, test, vi } from "vitest";
 import {
 	SessionCatalogUpdated,
+	RunCancelled,
+	RunCompleted,
+	RunFailed,
+	RunStarted,
 	SessionClosed,
+	SessionCancelRun,
 	SessionSelected,
+	SessionSendMessage,
+	SessionPromptFailed,
 	SessionStatusChanged,
+	TimelineMessageDelta,
+	ToolFinished,
+	ToolStarted,
+	ToolUpdated,
 	type TimelineSnapshot,
 	type GuiEvent,
 	InternalIpcError,
@@ -12,6 +23,7 @@ import {
 	catalogRevisionFromString,
 	eventIdFromString,
 	requestIdFromString,
+	runIdFromString,
 	sessionIdFromString,
 	workspaceIdFromString,
 } from "../../src/contracts/index.ts";
@@ -227,6 +239,272 @@ describe("createGuiCatalogStore", () => {
 
 		expect(store.getSnapshot().timelines[`${workspaceA}:${sessionId}`]).toBeUndefined();
 		expect(store.getSnapshot().timelines[`${workspaceB}:${sessionId}`]).toEqual(timeline);
+	});
+
+	test("keeps composer drafts per workspace session and sends prompt commands", async () => {
+		const invoke = vi.fn().mockResolvedValue({
+			ok: true,
+			requestId: requestIdFromString("request-1"),
+			data: undefined,
+		});
+		const workspaceA = workspaceIdFromString("workspace-a");
+		const workspaceB = workspaceIdFromString("workspace-b");
+		const sessionId = sessionIdFromString("session-1");
+		const store = createGuiCatalogStore(
+			{
+				invoke,
+				subscribe: () => () => undefined,
+			},
+			{ revision: catalogRevisionFromString("0"), workspaces: [] },
+		);
+
+		store.setComposerDraft(workspaceA, sessionId, "first");
+		store.setComposerDraft(workspaceB, sessionId, "second");
+		await store.sendMessage(workspaceA, sessionId, "steer now", "steer");
+		await store.cancelRun(workspaceA, sessionId);
+
+		expect(store.getSnapshot().composerDrafts).toEqual({
+			"workspace-a:session-1": "first",
+			"workspace-b:session-1": "second",
+		});
+		expect(invoke).toHaveBeenCalledWith(expect.any(SessionSendMessage));
+		expect(invoke).toHaveBeenCalledWith(expect.any(SessionCancelRun));
+		expect(invoke.mock.calls[0]?.[0]).toMatchObject({
+			_tag: "session.sendMessage",
+			workspaceId: workspaceA,
+			sessionId,
+			message: "steer now",
+			deliveryMode: "steer",
+		});
+	});
+
+	test("reports prompt acceptance and preserves drafts when send is rejected before acceptance", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const acceptedInvoke = vi.fn().mockResolvedValue({
+			ok: true,
+			requestId: requestIdFromString("request-1"),
+			data: undefined,
+		});
+		const rejectedInvoke = vi.fn().mockResolvedValue({
+			ok: false,
+			requestId: requestIdFromString("request-2"),
+			error: new InternalIpcError({ message: "Missing model" }),
+		});
+		const acceptedStore = createGuiCatalogStore(
+			{
+				invoke: acceptedInvoke,
+				subscribe: () => () => undefined,
+			},
+			{ revision: catalogRevisionFromString("0"), workspaces: [] },
+		);
+		const rejectedStore = createGuiCatalogStore(
+			{
+				invoke: rejectedInvoke,
+				subscribe: () => () => undefined,
+			},
+			{ revision: catalogRevisionFromString("0"), workspaces: [] },
+		);
+
+		rejectedStore.setComposerDraft(workspaceId, sessionId, "keep this");
+
+		await expect(acceptedStore.sendMessage(workspaceId, sessionId, "hello")).resolves.toBe(true);
+		await expect(rejectedStore.sendMessage(workspaceId, sessionId, "hello")).resolves.toBe(false);
+
+		expect(rejectedStore.getSnapshot().composerDrafts["workspace-1:session-1"]).toBe("keep this");
+		expect(rejectedStore.getSnapshot().error).toBe("Missing model");
+	});
+
+	test("applies prompt runtime events into live and final timeline state", () => {
+		const listeners: Array<(event: GuiEvent) => void> = [];
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const runId = runIdFromString("run-1");
+		const store = createGuiCatalogStore(
+			{
+				invoke: vi.fn(),
+				subscribe: (listener) => {
+					listeners.push(listener);
+					return () => undefined;
+				},
+			},
+			{ revision: catalogRevisionFromString("0"), workspaces: [] },
+		);
+		listeners[0](
+			new SessionCatalogUpdated({
+				eventId: eventIdFromString("event-1"),
+				sequence: 1,
+				workspaceId,
+				sessions: [
+					{
+						id: sessionId,
+						workspaceId,
+						title: "Session",
+						status: "ready",
+						updatedAt: "2026-06-18T00:00:00.000Z",
+						preview: "",
+						messageCount: 1,
+					},
+				],
+			}),
+		);
+
+		listeners[0](
+			new RunStarted({ eventId: eventIdFromString("event-2"), sequence: 2, workspaceId, sessionId, runId }),
+		);
+		listeners[0](
+			new TimelineMessageDelta({
+				eventId: eventIdFromString("event-3"),
+				sequence: 3,
+				workspaceId,
+				sessionId,
+				runId,
+				text: "Hel",
+			}),
+		);
+		listeners[0](
+			new TimelineMessageDelta({
+				eventId: eventIdFromString("event-4"),
+				sequence: 4,
+				workspaceId,
+				sessionId,
+				runId,
+				text: "lo",
+			}),
+		);
+		listeners[0](
+			new ToolStarted({
+				eventId: eventIdFromString("event-5"),
+				sequence: 5,
+				workspaceId,
+				sessionId,
+				runId,
+				toolCallId: "tool-1",
+				toolName: "read",
+			}),
+		);
+		listeners[0](
+			new ToolUpdated({
+				eventId: eventIdFromString("event-6"),
+				sequence: 6,
+				workspaceId,
+				sessionId,
+				runId,
+				toolCallId: "tool-1",
+				text: "reading",
+			}),
+		);
+		listeners[0](
+			new ToolFinished({
+				eventId: eventIdFromString("event-7"),
+				sequence: 7,
+				workspaceId,
+				sessionId,
+				runId,
+				toolCallId: "tool-1",
+				isError: false,
+			}),
+		);
+
+		expect(store.getSnapshot().sessionCatalogs[workspaceId].sessions[0].status).toBe("running");
+		expect(store.getSnapshot().timelines["workspace-1:session-1"]).toEqual({
+			workspaceId,
+			sessionId,
+			entries: [
+				{ id: "live:run-1:assistant", kind: "assistant", text: "Hello", isLive: true },
+				{
+					id: "tool:tool-1",
+					kind: "tool",
+					text: "reading",
+					toolCallId: "tool-1",
+					toolName: "read",
+					isLive: false,
+					isError: false,
+				},
+			],
+		});
+
+		const finalTimeline: TimelineSnapshot = {
+			workspaceId,
+			sessionId,
+			entries: [{ id: "entry-1", kind: "assistant", text: "Final" }],
+		};
+		listeners[0](
+			new RunCompleted({
+				eventId: eventIdFromString("event-8"),
+				sequence: 8,
+				workspaceId,
+				sessionId,
+				runId,
+				timeline: finalTimeline,
+			}),
+		);
+		expect(store.getSnapshot().timelines["workspace-1:session-1"]).toEqual(finalTimeline);
+		expect(store.getSnapshot().sessionCatalogs[workspaceId].sessions[0].status).toBe("ready");
+	});
+
+	test("applies prompt failure and cancellation states", () => {
+		const listeners: Array<(event: GuiEvent) => void> = [];
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const runId = runIdFromString("run-1");
+		const store = createGuiCatalogStore(
+			{
+				invoke: vi.fn(),
+				subscribe: (listener) => {
+					listeners.push(listener);
+					return () => undefined;
+				},
+			},
+			{ revision: catalogRevisionFromString("0"), workspaces: [] },
+		);
+		listeners[0](
+			new SessionCatalogUpdated({
+				eventId: eventIdFromString("event-1"),
+				sequence: 1,
+				workspaceId,
+				sessions: [
+					{
+						id: sessionId,
+						workspaceId,
+						title: "Session",
+						status: "ready",
+						updatedAt: "2026-06-18T00:00:00.000Z",
+						preview: "",
+						messageCount: 1,
+					},
+				],
+			}),
+		);
+		listeners[0](
+			new RunFailed({
+				eventId: eventIdFromString("event-2"),
+				sequence: 2,
+				workspaceId,
+				sessionId,
+				runId,
+				error: new SessionPromptFailed({
+					workspaceId,
+					sessionId,
+					runId,
+					message: "Prompt failed",
+				}),
+			}),
+		);
+		expect(store.getSnapshot().error).toBe("Prompt failed");
+		expect(store.getSnapshot().sessionCatalogs[workspaceId].sessions[0].status).toBe("failed");
+		expect(store.getSnapshot().timelines["workspace-1:session-1"].entries.at(-1)).toMatchObject({
+			kind: "error",
+			text: "Prompt failed",
+		});
+
+		listeners[0](
+			new RunStarted({ eventId: eventIdFromString("event-3"), sequence: 3, workspaceId, sessionId, runId }),
+		);
+		listeners[0](
+			new RunCancelled({ eventId: eventIdFromString("event-4"), sequence: 4, workspaceId, sessionId, runId }),
+		);
+		expect(store.getSnapshot().sessionCatalogs[workspaceId].sessions[0].status).toBe("ready");
 	});
 
 	test("keeps the IPC subscription alive across React listener cleanup and resubscribe", () => {

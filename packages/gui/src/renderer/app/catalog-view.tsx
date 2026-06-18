@@ -153,9 +153,15 @@ export function MainPane({
 			{timeline && timeline.entries.length > 0 ? (
 				<div className="transcript-list" role="log" aria-label="Transcript">
 					{timeline.entries.map((entry) => (
-						<article key={entry.id} className={`transcript-entry transcript-entry--${entry.kind}`}>
-							<p className="transcript-kind">{entry.kind}</p>
-							<p>{entry.text}</p>
+						<article
+							key={entry.id}
+							className={`transcript-entry transcript-entry--${entry.kind}${entry.isLive ? " transcript-entry--live" : ""}${entry.isError ? " transcript-entry--error" : ""}`}
+						>
+							<p className="transcript-kind">
+								{entry.toolName ?? entry.kind}
+								{entry.isLive ? " running" : ""}
+							</p>
+							<p>{entry.text || (entry.kind === "tool" ? "Waiting for tool output." : "")}</p>
 						</article>
 					))}
 				</div>

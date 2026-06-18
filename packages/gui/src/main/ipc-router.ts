@@ -10,12 +10,14 @@ import {
 	InternalIpcError,
 	ReceiptEmitted,
 	SessionArchive,
+	SessionCancelRun,
 	SessionClose,
 	SessionCatalogUpdated,
 	SessionCreate,
 	SessionGetTranscript,
 	SessionOpen,
 	SessionRename,
+	SessionSendMessage,
 	SessionSelected,
 	SessionUnarchive,
 	UnauthorizedIpcSender,
@@ -52,7 +54,10 @@ export interface CreateGuiInvokeHandlerOptions {
 	mode: string | undefined;
 	pickWorkspaceDirectory?: () => Promise<string | undefined>;
 	policy: AppOriginPolicy;
-	sessionSupervisor?: Pick<SessionSupervisor, "closeSession" | "createSession" | "getTranscript" | "openSession">;
+	sessionSupervisor?: Pick<
+		SessionSupervisor,
+		"cancelRun" | "closeSession" | "createSession" | "getTranscript" | "openSession" | "sendMessage"
+	>;
 }
 
 type RendererEventSender = Pick<WebContents, "id" | "isDestroyed" | "once" | "send">;
@@ -169,7 +174,9 @@ async function handleGuiCommand(
 		return { ok: true, requestId: command.requestId, data };
 	}
 
-	options.eventBus.publishReceipt(command.requestId, `${command._tag}.accepted`);
+	if (!(command instanceof SessionSendMessage) && !(command instanceof SessionCancelRun)) {
+		options.eventBus.publishReceipt(command.requestId, `${command._tag}.accepted`);
+	}
 
 	try {
 		if (command instanceof WorkspaceAdd) {
@@ -246,6 +253,24 @@ async function handleGuiCommand(
 			const timeline = await options.sessionSupervisor.getTranscript(command.workspaceId, command.sessionId);
 			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
 			return { ok: true, requestId: command.requestId, data: timeline };
+		}
+
+		if (command instanceof SessionSendMessage && options.sessionSupervisor) {
+			await options.sessionSupervisor.sendMessage({
+				requestId: command.requestId,
+				workspaceId: command.workspaceId,
+				sessionId: command.sessionId,
+				message: command.message,
+				...(command.deliveryMode ? { deliveryMode: command.deliveryMode } : {}),
+			});
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
+		if (command instanceof SessionCancelRun && options.sessionSupervisor) {
+			await options.sessionSupervisor.cancelRun(command.workspaceId, command.sessionId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
 		}
 
 		if (command instanceof SessionRename) {

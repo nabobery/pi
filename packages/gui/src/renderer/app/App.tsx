@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
 	createGuiCatalogStore,
 	createValidatedRendererCatalogApi,
@@ -60,6 +60,16 @@ function ReadyApp({ api, loadState }: { api: RendererCatalogApi; loadState: Extr
 		selectedWorkspace && selectedSession
 			? state.timelines[`${selectedWorkspace.id}:${selectedSession.id}`]
 			: undefined;
+	const selectedKey =
+		selectedWorkspace && selectedSession ? `${selectedWorkspace.id}:${selectedSession.id}` : undefined;
+	const draft = selectedKey ? (state.composerDrafts[selectedKey] ?? "") : "";
+	const canEditComposer =
+		selectedSession?.status === "ready" ||
+		selectedSession?.status === "running" ||
+		selectedSession?.status === "cancelling";
+	const canSend = Boolean(selectedWorkspace && selectedSession && canEditComposer && draft.trim());
+	const isRunning = selectedSession?.status === "running";
+	const isCancelling = selectedSession?.status === "cancelling";
 
 	useEffect(() => {
 		if (!selectedWorkspace || !selectedSession) return;
@@ -67,6 +77,25 @@ function ReadyApp({ api, loadState }: { api: RendererCatalogApi; loadState: Extr
 		if (selectedTimeline) return;
 		void store.getTranscript(selectedWorkspace.id, selectedSession.id);
 	}, [selectedSession, selectedTimeline, selectedWorkspace, store]);
+
+	function updateDraft(value: string): void {
+		if (!selectedWorkspace || !selectedSession) return;
+		store.setComposerDraft(selectedWorkspace.id, selectedSession.id, value);
+	}
+
+	async function sendDraft(deliveryMode?: "steer" | "followUp"): Promise<void> {
+		if (!selectedWorkspace || !selectedSession) return;
+		const message = draft.trim();
+		if (!message) return;
+		const accepted = await store.sendMessage(selectedWorkspace.id, selectedSession.id, message, deliveryMode);
+		if (accepted) store.setComposerDraft(selectedWorkspace.id, selectedSession.id, "");
+	}
+
+	function submitPrompt(event: FormEvent<HTMLFormElement>): void {
+		event.preventDefault();
+		if (isRunning) return;
+		void sendDraft();
+	}
 
 	return (
 		<main className="app-shell">
@@ -99,15 +128,52 @@ function ReadyApp({ api, loadState }: { api: RendererCatalogApi; loadState: Extr
 					</p>
 				</header>
 				<MainPane session={selectedSession} timeline={selectedTimeline} />
-				<footer className="composer" aria-label="Composer">
-					<textarea data-testid="composer-input" placeholder="No transcript loaded." disabled />
+				<form className="composer" aria-label="Composer" onSubmit={submitPrompt}>
+					<textarea
+						data-testid="composer-input"
+						placeholder={selectedSession ? "Prompt Pi." : "Open a session."}
+						disabled={!canEditComposer}
+						value={draft}
+						onChange={(event) => updateDraft(event.currentTarget.value)}
+					/>
 					<div className="composer-status">
 						<span>Mode: {loadState.appInfo.mode}</span>
-						<button type="button" disabled>
-							Send
-						</button>
+						<div className="composer-actions">
+							{isRunning || isCancelling ? (
+								<>
+									<button
+										type="button"
+										disabled={!canSend || isCancelling}
+										onClick={() => void sendDraft("steer")}
+									>
+										Steer
+									</button>
+									<button
+										type="button"
+										disabled={!canSend || isCancelling}
+										onClick={() => void sendDraft("followUp")}
+									>
+										Follow-up
+									</button>
+									<button
+										type="button"
+										disabled={!selectedWorkspace || !selectedSession || isCancelling}
+										onClick={() => {
+											if (!selectedWorkspace || !selectedSession) return;
+											void store.cancelRun(selectedWorkspace.id, selectedSession.id);
+										}}
+									>
+										Cancel
+									</button>
+								</>
+							) : (
+								<button type="submit" disabled={!canSend}>
+									Send
+								</button>
+							)}
+						</div>
 					</div>
-				</footer>
+				</form>
 			</section>
 		</main>
 	);

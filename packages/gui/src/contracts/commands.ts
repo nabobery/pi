@@ -86,7 +86,13 @@ export class SessionClose extends Schema.TaggedRequest<SessionClose>()("session.
 export class SessionSendMessage extends Schema.TaggedRequest<SessionSendMessage>()("session.sendMessage", {
 	failure: GuiError,
 	success: VoidSuccess,
-	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId, message: Schema.String },
+	payload: {
+		requestId: RequestId,
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		message: Schema.String,
+		deliveryMode: Schema.optional(Schema.Literal("steer", "followUp")),
+	},
 }) {}
 
 export class SessionCancelRun extends Schema.TaggedRequest<SessionCancelRun>()("session.cancelRun", {

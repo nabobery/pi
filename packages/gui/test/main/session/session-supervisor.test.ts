@@ -1,7 +1,9 @@
 import { describe, expect, test, vi } from "vitest";
 import {
+	SessionCancelFailed,
 	SessionRuntimeCloseFailed,
 	SessionRuntimeNotFound,
+	SessionRunNotActive,
 	catalogRevisionFromString,
 	sessionIdFromString,
 	workspaceIdFromString,
@@ -10,8 +12,13 @@ import {
 	type TimelineSnapshot,
 	type WorkspaceCatalogSnapshot,
 	eventIdFromString,
+	requestIdFromString,
 } from "../../../src/contracts/index.ts";
-import type { RuntimeSessionHandle, SessionDriver } from "../../../src/main/session/session-driver.ts";
+import type {
+	RuntimeSessionHandle,
+	SendRuntimeMessageResult,
+	SessionDriver,
+} from "../../../src/main/session/session-driver.ts";
 import { SessionSupervisor } from "../../../src/main/session/session-supervisor.ts";
 
 describe("SessionSupervisor", () => {
@@ -134,6 +141,231 @@ describe("SessionSupervisor", () => {
 		).toBe(true);
 		expect(fixture.events.map((event) => event._tag)).not.toContain("session.closed");
 	});
+
+	test("sendMessage emits accepted receipt, starts a run, streams deltas and tools, then completes with transcript", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		fixture.events.length = 0;
+
+		await fixture.supervisor.sendMessage({
+			requestId: requestIdFromString("request-1"),
+			workspaceId: workspaceIdFromString("workspace-a"),
+			sessionId: sessionIdFromString("session-1"),
+			message: "hello",
+		});
+		fixture.emitRuntimeEvent({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Hi" } });
+		fixture.emitRuntimeEvent({
+			type: "tool_execution_start",
+			toolCallId: "tool-1",
+			toolName: "read",
+			args: { path: "README.md" },
+		});
+		fixture.emitRuntimeEvent({
+			type: "tool_execution_update",
+			toolCallId: "tool-1",
+			toolName: "read",
+			args: { path: "README.md" },
+			partialResult: "ok",
+		});
+		fixture.emitRuntimeEvent({
+			type: "tool_execution_end",
+			toolCallId: "tool-1",
+			toolName: "read",
+			result: "done",
+			isError: false,
+		});
+		fixture.resolvePrompt();
+		await waitForEvent(fixture.events, "run.completed");
+
+		expect(fixture.events.map((event) => event._tag)).toEqual([
+			"receipt.emitted",
+			"run.started",
+			"session.statusChanged",
+			"timeline.messageDelta",
+			"tool.started",
+			"tool.updated",
+			"tool.finished",
+			"run.completed",
+			"session.statusChanged",
+		]);
+		expect(fixture.events[0]).toMatchObject({ _tag: "receipt.emitted", receipt: "session.sendMessage.accepted" });
+		expect(fixture.events[1]).toMatchObject({
+			_tag: "run.started",
+			workspaceId: "workspace-a",
+			sessionId: "session-1",
+		});
+		expect(fixture.events[3]).toMatchObject({
+			_tag: "timeline.messageDelta",
+			workspaceId: "workspace-a",
+			sessionId: "session-1",
+			text: "Hi",
+		});
+		expect(fixture.events.at(-2)).toMatchObject({
+			_tag: "run.completed",
+			timeline: {
+				workspaceId: "workspace-a",
+				sessionId: "session-1",
+				entries: [{ id: "entry-1", kind: "user", text: "hello" }],
+			},
+		});
+	});
+
+	test("prompt preflight rejection does not start a run", async () => {
+		const fixture = createSupervisorFixture();
+		fixture.driver.sendMessage = vi.fn(async () => {
+			throw new Error("missing key");
+		});
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		fixture.events.length = 0;
+
+		await expect(
+			fixture.supervisor.sendMessage({
+				requestId: requestIdFromString("request-1"),
+				workspaceId: workspaceIdFromString("workspace-a"),
+				sessionId: sessionIdFromString("session-1"),
+				message: "hello",
+			}),
+		).rejects.toThrow("missing key");
+
+		expect(fixture.events).toEqual([]);
+	});
+
+	test("post-acceptance prompt failure emits run.failed and failed status", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		fixture.events.length = 0;
+
+		await fixture.supervisor.sendMessage({
+			requestId: requestIdFromString("request-1"),
+			workspaceId: workspaceIdFromString("workspace-a"),
+			sessionId: sessionIdFromString("session-1"),
+			message: "hello",
+		});
+		fixture.rejectPrompt(new Error("provider failed"));
+		await waitForEvent(fixture.events, "run.failed");
+
+		expect(fixture.events.at(-2)).toMatchObject({
+			_tag: "run.failed",
+			error: { _tag: "SessionPromptFailed", cause: "provider failed" },
+		});
+		expect(fixture.events.at(-1)).toMatchObject({
+			_tag: "session.statusChanged",
+			session: { status: "failed" },
+		});
+	});
+
+	test.each(["steer", "followUp"] as const)(
+		"delivery mode %s is accepted as active-run input without starting or completing a new run",
+		async (deliveryMode) => {
+			const fixture = createSupervisorFixture();
+			await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+			fixture.events.length = 0;
+
+			await fixture.supervisor.sendMessage({
+				requestId: requestIdFromString("request-1"),
+				workspaceId: workspaceIdFromString("workspace-a"),
+				sessionId: sessionIdFromString("session-1"),
+				message: "hello",
+			});
+			fixture.events.length = 0;
+
+			await fixture.supervisor.sendMessage({
+				requestId: requestIdFromString("request-2"),
+				workspaceId: workspaceIdFromString("workspace-a"),
+				sessionId: sessionIdFromString("session-1"),
+				message: "adjust",
+				deliveryMode,
+			});
+			fixture.resolvePrompt();
+			await flushAsyncRunHandlers();
+
+			expect(fixture.driver.sendMessage).toHaveBeenLastCalledWith(
+				expect.any(Object),
+				expect.objectContaining({ message: "adjust", deliveryMode }),
+			);
+			expect(fixture.events.map((event) => event._tag)).toEqual(["receipt.emitted"]);
+			expect(fixture.events[0]).toMatchObject({
+				_tag: "receipt.emitted",
+				receipt: "session.sendMessage.accepted",
+				requestId: "request-2",
+			});
+		},
+	);
+
+	test("delivery mode send requires an active run", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		fixture.events.length = 0;
+
+		await expect(
+			fixture.supervisor.sendMessage({
+				requestId: requestIdFromString("request-1"),
+				workspaceId: workspaceIdFromString("workspace-a"),
+				sessionId: sessionIdFromString("session-1"),
+				message: "adjust",
+				deliveryMode: "steer",
+			}),
+		).rejects.toBeInstanceOf(SessionRunNotActive);
+
+		expect(fixture.driver.sendMessage).not.toHaveBeenCalled();
+		expect(fixture.events).toEqual([]);
+	});
+
+	test("cancelRun requires an active run and emits run.cancelled", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+
+		await expect(
+			fixture.supervisor.cancelRun(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1")),
+		).rejects.toBeInstanceOf(SessionRunNotActive);
+
+		fixture.events.length = 0;
+		await fixture.supervisor.sendMessage({
+			requestId: requestIdFromString("request-1"),
+			workspaceId: workspaceIdFromString("workspace-a"),
+			sessionId: sessionIdFromString("session-1"),
+			message: "hello",
+		});
+		await fixture.supervisor.cancelRun(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+
+		expect(fixture.driver.cancelRun).toHaveBeenCalledTimes(1);
+		expect(fixture.events.at(-2)).toMatchObject({ _tag: "run.cancelled" });
+		expect(fixture.events.at(-1)).toMatchObject({
+			_tag: "session.statusChanged",
+			session: { status: "ready" },
+		});
+	});
+
+	test("cancelRun failure restores running status and keeps the active run cancellable", async () => {
+		const fixture = createSupervisorFixture();
+		fixture.driver.cancelRun = vi.fn(async () => {
+			throw new Error("abort failed");
+		});
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		fixture.events.length = 0;
+		await fixture.supervisor.sendMessage({
+			requestId: requestIdFromString("request-1"),
+			workspaceId: workspaceIdFromString("workspace-a"),
+			sessionId: sessionIdFromString("session-1"),
+			message: "hello",
+		});
+		fixture.events.length = 0;
+
+		await expect(
+			fixture.supervisor.cancelRun(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1")),
+		).rejects.toMatchObject({
+			_tag: "SessionCancelFailed",
+			cause: "abort failed",
+		} satisfies Partial<SessionCancelFailed>);
+
+		expect(fixture.events.map((event) => event._tag)).toEqual(["session.statusChanged", "session.statusChanged"]);
+		expect(fixture.events[0]).toMatchObject({ _tag: "session.statusChanged", session: { status: "cancelling" } });
+		expect(fixture.events[1]).toMatchObject({ _tag: "session.statusChanged", session: { status: "running" } });
+		expect(fixture.events.map((event) => event._tag)).not.toContain("run.cancelled");
+		fixture.driver.cancelRun = vi.fn(async () => undefined);
+		await fixture.supervisor.cancelRun(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		expect(fixture.driver.cancelRun).toHaveBeenCalledTimes(1);
+	});
 });
 
 function createSupervisorFixture() {
@@ -165,8 +397,12 @@ function createSupervisorFixture() {
 		openSession: vi.fn((workspaceId) => Promise.resolve(createSessionCatalog(workspaceId))),
 	};
 	const unsubscribe = vi.fn();
+	let runtimeListener: ((event: unknown) => void) | undefined;
+	let resolvePromptCompletion: (() => void) | undefined;
+	let rejectPromptCompletion: ((error: unknown) => void) | undefined;
 	const driver: SessionDriver = {
 		openSession: vi.fn(async (request) => createHandle(request.workspaceId, request.workspacePath)),
+		cancelRun: vi.fn(async () => undefined),
 		closeSession: vi.fn(async () => undefined),
 		getTranscript: vi.fn(
 			async (handle): Promise<TimelineSnapshot> => ({
@@ -175,7 +411,20 @@ function createSupervisorFixture() {
 				entries: [{ id: "entry-1", kind: "user", text: "hello" }],
 			}),
 		),
-		subscribe: vi.fn(() => unsubscribe),
+		sendMessage: vi.fn(
+			async (): Promise<SendRuntimeMessageResult> =>
+				new Promise<SendRuntimeMessageResult>((resolve) => {
+					const completion = new Promise<void>((complete, reject) => {
+						resolvePromptCompletion = complete;
+						rejectPromptCompletion = reject;
+					});
+					resolve({ completion });
+				}),
+		),
+		subscribe: vi.fn((_handle, listener) => {
+			runtimeListener = listener;
+			return unsubscribe;
+		}),
 	};
 	const events: GuiEvent[] = [];
 	let sequence = 0;
@@ -191,7 +440,10 @@ function createSupervisorFixture() {
 
 	return {
 		driver,
+		emitRuntimeEvent: (event: unknown) => runtimeListener?.(event),
 		events,
+		rejectPrompt: (error: unknown) => rejectPromptCompletion?.(error),
+		resolvePrompt: () => resolvePromptCompletion?.(),
 		supervisor: new SessionSupervisor({ catalogService, driver, eventBus }),
 		unsubscribe,
 	};
@@ -220,7 +472,12 @@ function createHandle(workspaceId: string, workspacePath: string): RuntimeSessio
 	return {
 		key: `${workspaceId}:session-1`,
 		runtime: {
-			session: { bindExtensions: vi.fn() },
+			session: {
+				abort: vi.fn(async () => undefined),
+				bindExtensions: vi.fn(),
+				prompt: vi.fn(async () => undefined),
+				subscribe: vi.fn(() => vi.fn()),
+			},
 			dispose: vi.fn(),
 		},
 		sessionFilePath: `/tmp/${workspaceId}/session-1.jsonl`,
@@ -229,4 +486,27 @@ function createHandle(workspaceId: string, workspacePath: string): RuntimeSessio
 		workspaceId: workspaceIdFromString(workspaceId),
 		workspacePath,
 	};
+}
+
+async function waitForEvent(events: readonly GuiEvent[], tag: GuiEvent["_tag"]): Promise<void> {
+	return new Promise((resolve, reject) => {
+		let attempt = 0;
+		const check = () => {
+			attempt += 1;
+			if (events.some((event) => event._tag === tag)) {
+				resolve();
+				return;
+			}
+			if (attempt >= 20) {
+				reject(new Error(`Timed out waiting for ${tag}`));
+				return;
+			}
+			setTimeout(check, 0);
+		};
+		check();
+	});
+}
+
+async function flushAsyncRunHandlers(): Promise<void> {
+	await new Promise((resolve) => setTimeout(resolve, 0));
 }

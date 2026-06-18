@@ -1,5 +1,7 @@
 import { SessionManager } from "@earendil-works/pi-coding-agent/runtime";
 import {
+	SessionCancelFailed,
+	SessionPromptRejected,
 	SessionRuntimeBindFailed,
 	SessionRuntimeCloseFailed,
 	SessionRuntimeCreateFailed,
@@ -16,6 +18,8 @@ import type {
 	OpenRuntimeSessionRequest,
 	RuntimeSessionHandle,
 	RuntimeTranscriptSessionManager,
+	SendRuntimeMessageRequest,
+	SendRuntimeMessageResult,
 	SessionDriver,
 } from "./session-driver.ts";
 import { RuntimeSupervisor } from "./runtime-supervisor.ts";
@@ -72,6 +76,69 @@ export class PiSdkSessionDriver implements SessionDriver {
 		}
 	}
 
+	async cancelRun(handle: RuntimeSessionHandle): Promise<void> {
+		try {
+			await handle.runtime.session.abort();
+		} catch (error) {
+			throw new SessionCancelFailed({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				message: "Failed to cancel Pi session run",
+				cause: getErrorMessage(error),
+			});
+		}
+	}
+
+	async sendMessage(
+		handle: RuntimeSessionHandle,
+		request: SendRuntimeMessageRequest,
+	): Promise<SendRuntimeMessageResult> {
+		let resolvePreflight: (() => void) | undefined;
+		let rejectPreflight: ((error: unknown) => void) | undefined;
+		const preflight = new Promise<void>((resolve, reject) => {
+			resolvePreflight = resolve;
+			rejectPreflight = reject;
+		});
+
+		const completion = handle.runtime.session.prompt(request.message, {
+			...(request.deliveryMode ? { streamingBehavior: request.deliveryMode } : {}),
+			source: "rpc",
+			preflightResult: (success) => {
+				if (success) {
+					resolvePreflight?.();
+					return;
+				}
+				rejectPreflight?.(new Error("Prompt preflight rejected"));
+			},
+		});
+		completion.catch((error: unknown) => {
+			rejectPreflight?.(error);
+		});
+
+		try {
+			await preflight;
+		} catch (error) {
+			try {
+				await completion;
+			} catch (completionError) {
+				throw new SessionPromptRejected({
+					workspaceId: handle.workspaceId,
+					sessionId: handle.sessionId,
+					message: "Pi rejected the prompt before starting a run",
+					cause: getErrorMessage(completionError),
+				});
+			}
+			throw new SessionPromptRejected({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				message: "Pi rejected the prompt before starting a run",
+				cause: getErrorMessage(error),
+			});
+		}
+
+		return { completion };
+	}
+
 	async getTranscript(handle: RuntimeSessionHandle): Promise<TimelineSnapshot> {
 		try {
 			return projectTimelineSnapshot(handle.workspaceId, handle.sessionId, handle.sessionManager.getEntries());
@@ -86,8 +153,8 @@ export class PiSdkSessionDriver implements SessionDriver {
 		}
 	}
 
-	subscribe(_handle: RuntimeSessionHandle, _listener: () => void): () => void {
-		return () => undefined;
+	subscribe(handle: RuntimeSessionHandle, listener: Parameters<SessionDriver["subscribe"]>[1]): () => void {
+		return handle.runtime.session.subscribe(listener);
 	}
 
 	private async createHandle(

@@ -3,7 +3,9 @@ import {
 	createAgentSessionRuntime,
 	createAgentSessionServices,
 	getAgentDir,
+	type AgentSessionEvent,
 	type CreateAgentSessionRuntimeFactory,
+	type PromptOptions,
 	type SessionManager,
 } from "@earendil-works/pi-coding-agent/runtime";
 import {
@@ -19,8 +21,11 @@ export interface RuntimeSessionManager {
 }
 
 export interface RuntimeAgentSession {
+	abort(): Promise<void>;
 	bindExtensions(bindings: { mode: "rpc"; onError?: (error: unknown) => void }): Promise<void>;
+	prompt(text: string, options?: PromptOptions): Promise<void>;
 	sessionManager?: RuntimeSessionManager;
+	subscribe(listener: (event: AgentSessionEvent) => void): () => void;
 }
 
 export interface ManagedAgentRuntime {

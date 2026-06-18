@@ -70,12 +70,16 @@ export class SessionStatusChanged extends Schema.TaggedClass<SessionStatusChange
 
 export class TimelineMessageDelta extends Schema.TaggedClass<TimelineMessageDelta>()("timeline.messageDelta", {
 	...EventBaseFields,
+	workspaceId: WorkspaceId,
+	runId: RunId,
 	sessionId: SessionId,
 	text: Schema.String,
 }) {}
 
 export class ToolStarted extends Schema.TaggedClass<ToolStarted>()("tool.started", {
 	...EventBaseFields,
+	workspaceId: WorkspaceId,
+	runId: RunId,
 	sessionId: SessionId,
 	toolCallId: Schema.String,
 	toolName: Schema.String,
@@ -83,6 +87,8 @@ export class ToolStarted extends Schema.TaggedClass<ToolStarted>()("tool.started
 
 export class ToolUpdated extends Schema.TaggedClass<ToolUpdated>()("tool.updated", {
 	...EventBaseFields,
+	workspaceId: WorkspaceId,
+	runId: RunId,
 	sessionId: SessionId,
 	toolCallId: Schema.String,
 	text: Schema.String,
@@ -90,6 +96,8 @@ export class ToolUpdated extends Schema.TaggedClass<ToolUpdated>()("tool.updated
 
 export class ToolFinished extends Schema.TaggedClass<ToolFinished>()("tool.finished", {
 	...EventBaseFields,
+	workspaceId: WorkspaceId,
+	runId: RunId,
 	sessionId: SessionId,
 	toolCallId: Schema.String,
 	isError: Schema.Boolean,
@@ -97,6 +105,7 @@ export class ToolFinished extends Schema.TaggedClass<ToolFinished>()("tool.finis
 
 export class QueueUpdated extends Schema.TaggedClass<QueueUpdated>()("queue.updated", {
 	...EventBaseFields,
+	workspaceId: WorkspaceId,
 	sessionId: SessionId,
 	steeringCount: Schema.Number,
 	followUpCount: Schema.Number,
@@ -105,12 +114,14 @@ export class QueueUpdated extends Schema.TaggedClass<QueueUpdated>()("queue.upda
 export class RunStarted extends Schema.TaggedClass<RunStarted>()("run.started", {
 	...EventBaseFields,
 	runId: RunId,
+	workspaceId: WorkspaceId,
 	sessionId: SessionId,
 }) {}
 
 export class RunCompleted extends Schema.TaggedClass<RunCompleted>()("run.completed", {
 	...EventBaseFields,
 	runId: RunId,
+	workspaceId: WorkspaceId,
 	sessionId: SessionId,
 	timeline: Schema.optional(TimelineSnapshot),
 }) {}
@@ -118,8 +129,16 @@ export class RunCompleted extends Schema.TaggedClass<RunCompleted>()("run.comple
 export class RunFailed extends Schema.TaggedClass<RunFailed>()("run.failed", {
 	...EventBaseFields,
 	runId: RunId,
+	workspaceId: WorkspaceId,
 	sessionId: SessionId,
 	error: GuiError,
+}) {}
+
+export class RunCancelled extends Schema.TaggedClass<RunCancelled>()("run.cancelled", {
+	...EventBaseFields,
+	runId: RunId,
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
 }) {}
 
 export class ExtensionUiRequested extends Schema.TaggedClass<ExtensionUiRequested>()("extensionUi.requested", {
@@ -160,6 +179,7 @@ export const GuiEvent = Schema.Union(
 	RunStarted,
 	RunCompleted,
 	RunFailed,
+	RunCancelled,
 	ExtensionUiRequested,
 	ExtensionUiResolved,
 	ExtensionUiCompatibilityIssue,

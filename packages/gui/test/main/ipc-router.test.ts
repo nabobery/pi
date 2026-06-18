@@ -12,6 +12,7 @@ import {
 	SessionGetTranscript,
 	SessionOpen,
 	SessionRename,
+	SessionSendMessage,
 	SessionUnarchive,
 	type TimelineSnapshot,
 	type WorkspaceCatalogSnapshot,
@@ -166,6 +167,7 @@ describe("createGuiInvokeHandler", () => {
 			],
 		};
 		const sessionSupervisor = {
+			cancelRun: vi.fn(async () => undefined),
 			closeSession: vi.fn(async () => undefined),
 			createSession: vi.fn(async () => sessions),
 			getTranscript: vi.fn(
@@ -176,6 +178,7 @@ describe("createGuiInvokeHandler", () => {
 				}),
 			),
 			openSession: vi.fn(async () => sessions),
+			sendMessage: vi.fn(async () => undefined),
 		};
 		const eventBus = new RendererEventBus();
 		const handler = createGuiInvokeHandler({
@@ -209,6 +212,84 @@ describe("createGuiInvokeHandler", () => {
 		expect(sessionSupervisor.createSession).toHaveBeenCalledWith(workspaceId);
 		expect(sessionSupervisor.getTranscript).toHaveBeenCalledWith(workspaceId, sessionId);
 		expect(sessionSupervisor.closeSession).toHaveBeenCalledWith(workspaceId, sessionId);
+	});
+
+	test("routes prompt commands through the supervisor without generic preflight receipts", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const sessionSupervisor = {
+			cancelRun: vi.fn(async () => undefined),
+			closeSession: vi.fn(async () => undefined),
+			createSession: vi.fn(),
+			getTranscript: vi.fn(),
+			openSession: vi.fn(),
+			sendMessage: vi.fn(async () => undefined),
+		};
+		const eventBus = new RendererEventBus();
+		const handler = createGuiInvokeHandler({
+			app,
+			eventBus,
+			mode: "test",
+			policy,
+			sessionSupervisor,
+		});
+		const sender = createSender();
+
+		const result = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new SessionSendMessage({
+				requestId: requestIdFromString("request-1"),
+				workspaceId,
+				sessionId,
+				message: "hello",
+				deliveryMode: "steer",
+			}),
+		);
+
+		expect(result).toEqual({ ok: true, requestId: "request-1", data: undefined });
+		expect(sessionSupervisor.sendMessage).toHaveBeenCalledWith({
+			requestId: "request-1",
+			workspaceId,
+			sessionId,
+			message: "hello",
+			deliveryMode: "steer",
+		});
+		expect(sender.send.mock.calls.map((call) => call[1])).toEqual([
+			expect.objectContaining({ _tag: "receipt.emitted", receipt: "session.sendMessage.completed" }),
+		]);
+	});
+
+	test("routes cancel commands through the supervisor", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const sessionSupervisor = {
+			cancelRun: vi.fn(async () => undefined),
+			closeSession: vi.fn(async () => undefined),
+			createSession: vi.fn(),
+			getTranscript: vi.fn(),
+			openSession: vi.fn(),
+			sendMessage: vi.fn(async () => undefined),
+		};
+		const eventBus = new RendererEventBus();
+		const handler = createGuiInvokeHandler({
+			app,
+			eventBus,
+			mode: "test",
+			policy,
+			sessionSupervisor,
+		});
+
+		const result = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender: createSender() },
+			new SessionCancelRun({
+				requestId: requestIdFromString("request-1"),
+				workspaceId,
+				sessionId,
+			}),
+		);
+
+		expect(result).toEqual({ ok: true, requestId: "request-1", data: undefined });
+		expect(sessionSupervisor.cancelRun).toHaveBeenCalledWith(workspaceId, sessionId);
 	});
 
 	test("automatically emits bootstrap receipt events to trusted renderer senders", async () => {

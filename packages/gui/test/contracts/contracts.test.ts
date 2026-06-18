@@ -10,15 +10,23 @@ import {
 	GuiError,
 	GuiEvent,
 	ReceiptEmitted,
+	RunCancelled,
+	RunCompleted,
+	SessionCancelFailed,
 	SessionArchive,
 	SessionCatalogSnapshot,
 	SessionClose,
 	SessionClosed,
 	SessionGetTranscript,
+	SessionPromptFailed,
+	SessionPromptRejected,
 	SessionRuntimeNotFound,
+	SessionRunNotActive,
+	SessionSendMessage,
 	SessionRename,
 	SessionSelected,
 	TimelineSnapshot,
+	TimelineMessageDelta,
 	WorkspacePickDirectory,
 	WorkspaceRemove,
 	WorkspaceSynced,
@@ -28,6 +36,7 @@ import {
 	decodeTimelineSnapshot,
 	eventIdFromString,
 	requestIdFromString,
+	runIdFromString,
 	sessionIdFromString,
 	workspaceIdFromString,
 } from "../../src/contracts/index.ts";
@@ -86,6 +95,42 @@ describe("gui contracts", () => {
 			),
 		).resolves.toBeInstanceOf(SessionGetTranscript);
 		await expect(decodeGuiCommand({ _tag: "session.close", requestId: "request-8", sessionId })).rejects.toThrow();
+	});
+
+	test("decodes prompt commands with explicit running delivery modes", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+
+		const idleCommand = await decodeGuiCommand(
+			new SessionSendMessage({
+				requestId: requestIdFromString("request-9"),
+				workspaceId,
+				sessionId,
+				message: "hello",
+			}),
+		);
+		const runningCommand = await decodeGuiCommand(
+			new SessionSendMessage({
+				requestId: requestIdFromString("request-10"),
+				workspaceId,
+				sessionId,
+				message: "adjust",
+				deliveryMode: "steer",
+			}),
+		);
+
+		expect(idleCommand).toBeInstanceOf(SessionSendMessage);
+		expect(runningCommand).toMatchObject({ deliveryMode: "steer" });
+		await expect(
+			decodeGuiCommand({
+				_tag: "session.sendMessage",
+				requestId: "request-11",
+				workspaceId,
+				sessionId,
+				message: "bad",
+				deliveryMode: "now",
+			}),
+		).rejects.toThrow();
 	});
 
 	test("rejects commands with unknown tags", async () => {
@@ -159,6 +204,56 @@ describe("gui contracts", () => {
 		).resolves.toBeInstanceOf(SessionClosed);
 	});
 
+	test("decodes workspace-scoped prompt runtime events", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const runId = runIdFromString("run-1");
+
+		await expect(
+			decodeGuiEvent(
+				new TimelineMessageDelta({
+					eventId: eventIdFromString("event-5"),
+					sequence: 5,
+					workspaceId,
+					runId,
+					sessionId,
+					text: "hello",
+				}),
+			),
+		).resolves.toBeInstanceOf(TimelineMessageDelta);
+		await expect(
+			decodeGuiEvent(
+				new RunCompleted({
+					eventId: eventIdFromString("event-6"),
+					sequence: 6,
+					runId,
+					workspaceId,
+					sessionId,
+				}),
+			),
+		).resolves.toBeInstanceOf(RunCompleted);
+		await expect(
+			decodeGuiEvent(
+				new RunCancelled({
+					eventId: eventIdFromString("event-7"),
+					sequence: 7,
+					runId,
+					workspaceId,
+					sessionId,
+				}),
+			),
+		).resolves.toBeInstanceOf(RunCancelled);
+		await expect(
+			decodeGuiEvent({
+				_tag: "timeline.messageDelta",
+				eventId: "event-8",
+				sequence: 8,
+				sessionId,
+				text: "missing workspace",
+			}),
+		).rejects.toThrow();
+	});
+
 	test("decodes error serialization", async () => {
 		const error = await decodeGuiError(
 			new CommandNotImplemented({
@@ -196,6 +291,47 @@ describe("gui contracts", () => {
 		expect(error._tag).toBe("SessionRuntimeNotFound");
 	});
 
+	test("decodes phase 5 prompt errors", async () => {
+		await expect(
+			decodeGuiError(
+				new SessionPromptRejected({
+					workspaceId: "workspace-1",
+					sessionId: "session-1",
+					message: "Prompt rejected",
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionPromptRejected);
+		await expect(
+			decodeGuiError(
+				new SessionPromptFailed({
+					workspaceId: "workspace-1",
+					sessionId: "session-1",
+					runId: "run-1",
+					message: "Prompt failed",
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionPromptFailed);
+		await expect(
+			decodeGuiError(
+				new SessionCancelFailed({
+					workspaceId: "workspace-1",
+					sessionId: "session-1",
+					runId: "run-1",
+					message: "Cancel failed",
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionCancelFailed);
+		await expect(
+			decodeGuiError(
+				new SessionRunNotActive({
+					workspaceId: "workspace-1",
+					sessionId: "session-1",
+					message: "No active run",
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionRunNotActive);
+	});
+
 	test("decodes session catalog snapshots", () => {
 		const workspaceId = workspaceIdFromString("workspace-1");
 		const sessionId = sessionIdFromString("session-1");
@@ -208,7 +344,7 @@ describe("gui contracts", () => {
 						id: sessionId,
 						workspaceId,
 						title: "Session one",
-						status: "replacing",
+						status: "cancelling",
 						updatedAt: "2026-06-18T00:00:00.000Z",
 						preview: "Preview",
 						messageCount: 2,

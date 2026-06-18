@@ -295,6 +295,15 @@ button:not(:disabled) {
 	border-left-color: #8573a8;
 }
 
+.transcript-entry--error {
+	border-left-color: #b5453b;
+	background: #fff4f1;
+}
+
+.transcript-entry--live {
+	background: #fbfbf7;
+}
+
 .transcript-entry--system {
 	border-left-color: #a88163;
 }
@@ -351,6 +360,13 @@ button:not(:disabled) {
 	font-size: 13px;
 }
 
+.composer-actions {
+	display: flex;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
 .error-text {
 	margin: 0;
 	color: #9f2d20;
@@ -367,7 +383,8 @@ button:not(:disabled) {
 	}
 
 	.timeline-header,
-	.composer-status {
+	.composer-status,
+	.composer-actions {
 		align-items: flex-start;
 		flex-direction: column;
 	}
