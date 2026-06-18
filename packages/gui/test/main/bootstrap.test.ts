@@ -23,7 +23,7 @@ describe("startPiGui", () => {
 			devServerUrl: "https://example.com",
 			mainProcessDir: "/Applications/Pi.app/Contents/Resources/app.asar/dist/main",
 			mode: "test",
-			registerAppInfoHandler: vi.fn(),
+			registerGuiIpcHandlers: vi.fn(),
 			registerContentSecurityPolicy: vi.fn(),
 			session: {
 				defaultSession: {

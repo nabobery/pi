@@ -11,7 +11,7 @@ export interface StartPiGuiOptions {
 	devServerUrl: string | undefined;
 	mainProcessDir: string;
 	mode: string | undefined;
-	registerAppInfoHandler(app: App, mode: string | undefined, policy: AppOriginPolicy): void;
+	registerGuiIpcHandlers(app: App, mode: string | undefined, policy: AppOriginPolicy): unknown;
 	registerContentSecurityPolicy(session: StartupSession, isDevelopment: boolean): void;
 	session: {
 		defaultSession: StartupSession;
@@ -38,7 +38,7 @@ export async function startPiGui(options: StartPiGuiOptions): Promise<void> {
 				callback(false);
 			});
 			options.registerContentSecurityPolicy(options.session.defaultSession, isDevelopment);
-			options.registerAppInfoHandler(options.app as App, options.mode, appOriginPolicy);
+			options.registerGuiIpcHandlers(options.app as App, options.mode, appOriginPolicy);
 			options.createMainWindow({ appOriginPolicy, rendererTarget });
 
 			options.app.on("activate", () => {

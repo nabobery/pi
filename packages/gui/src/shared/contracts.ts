@@ -1,4 +1,5 @@
-export const APP_GET_INFO_CHANNEL = "app:get-info";
+export const PI_GUI_INVOKE_CHANNEL = "pi-gui:invoke";
+export const PI_GUI_EVENT_CHANNEL = "pi-gui:event";
 
 export interface AppInfo {
 	name: string;

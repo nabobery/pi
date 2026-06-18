@@ -6,7 +6,7 @@ const packageRoot = resolve(import.meta.dirname, "../..");
 
 describe("process boundaries", () => {
 	test("renderer and preload do not import from main process modules", () => {
-		const files = ["src/renderer/app/App.tsx", "src/preload/pi-gui-api.ts"].map((file) =>
+		const files = ["src/renderer/app/App.tsx", "src/preload/pi-gui-api.ts", "src/preload/index.ts"].map((file) =>
 			readFileSync(resolve(packageRoot, file), "utf8"),
 		);
 
@@ -14,6 +14,7 @@ describe("process boundaries", () => {
 			expect(file).not.toContain("/main/");
 			expect(file).not.toContain("../main/");
 			expect(file).not.toContain("../../main/");
+			expect(file).not.toContain("@earendil-works/pi-coding-agent");
 		}
 	});
 });

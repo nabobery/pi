@@ -1,6 +1,17 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { createPiGuiApi, type AppInfoInvoker } from "./pi-gui-api.ts";
+import { createPiGuiApi, type PiGuiApiTransport } from "./pi-gui-api.ts";
 
-const invokeAppInfo: AppInfoInvoker = (channel) => ipcRenderer.invoke(channel);
+const transport: PiGuiApiTransport = {
+	invoke: (channel, command) => ipcRenderer.invoke(channel, command),
+	on: (channel, listener) => {
+		const handler = (_event: Electron.IpcRendererEvent, value: unknown) => {
+			listener(value);
+		};
+		ipcRenderer.on(channel, handler);
+		return () => {
+			ipcRenderer.removeListener(channel, handler);
+		};
+	},
+};
 
-contextBridge.exposeInMainWorld("piGui", createPiGuiApi(invokeAppInfo));
+contextBridge.exposeInMainWorld("piGui", createPiGuiApi(transport));

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, session } from "electron";
 import { startPiGui } from "./bootstrap.ts";
 import { registerContentSecurityPolicy } from "./content-security-policy.ts";
-import { registerAppInfoHandler } from "./ipc.ts";
+import { registerGuiIpcHandlers } from "./ipc.ts";
 import { createMainWindow } from "./window.ts";
 
 void startPiGui({
@@ -12,7 +12,7 @@ void startPiGui({
 	devServerUrl: process.env.ELECTRON_RENDERER_URL,
 	mainProcessDir: import.meta.dirname,
 	mode: process.env.NODE_ENV ?? "production",
-	registerAppInfoHandler,
+	registerGuiIpcHandlers,
 	registerContentSecurityPolicy,
 	session,
 });

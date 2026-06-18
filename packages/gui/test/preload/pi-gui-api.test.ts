@@ -1,22 +1,115 @@
 import { describe, expect, test, vi } from "vitest";
+import { AppBootstrap, ReceiptEmitted, eventIdFromString, requestIdFromString } from "../../src/contracts/index.ts";
 import { createPiGuiApi } from "../../src/preload/pi-gui-api.ts";
 
 describe("createPiGuiApi", () => {
-	test("exposes only getAppInfo", async () => {
+	test("exposes only invoke and subscribe", async () => {
 		const invoke = vi.fn().mockResolvedValue({
-			name: "Pi GUI",
-			version: "1.2.3",
-			mode: "test",
+			ok: true,
+			requestId: "request-1",
+			data: {
+				appInfo: {
+					name: "Pi GUI",
+					version: "1.2.3",
+					mode: "test",
+				},
+			},
 		});
+		const on = vi.fn().mockReturnValue(() => undefined);
 
-		const api = createPiGuiApi(invoke);
+		const api = createPiGuiApi({ invoke, on });
 
-		expect(Object.keys(api)).toEqual(["getAppInfo"]);
-		await expect(api.getAppInfo()).resolves.toEqual({
-			name: "Pi GUI",
-			version: "1.2.3",
-			mode: "test",
+		expect(Object.keys(api)).toEqual(["invoke", "subscribe"]);
+		const command = new AppBootstrap({ requestId: requestIdFromString("request-1") });
+
+		await expect(api.invoke(command)).resolves.toEqual({
+			ok: true,
+			requestId: "request-1",
+			data: {
+				appInfo: {
+					name: "Pi GUI",
+					version: "1.2.3",
+					mode: "test",
+				},
+			},
 		});
-		expect(invoke).toHaveBeenCalledWith("app:get-info");
+		expect(invoke).toHaveBeenCalledWith("pi-gui:invoke", command);
+	});
+
+	test("subscribes to the fixed event channel", () => {
+		const unsubscribe = vi.fn();
+		const invoke = vi.fn();
+		const on = vi.fn().mockReturnValue(unsubscribe);
+		const listener = vi.fn();
+
+		const api = createPiGuiApi({ invoke, on });
+		const cleanup = api.subscribe(listener);
+
+		expect(on).toHaveBeenCalledWith("pi-gui:event", expect.any(Function));
+		cleanup();
+		expect(unsubscribe).toHaveBeenCalledTimes(1);
+	});
+
+	test("does not deliver malformed event payloads to subscribers", async () => {
+		let eventListener: ((event: unknown) => void) | undefined;
+		const invoke = vi.fn();
+		const on = vi.fn((_channel, listener: (event: unknown) => void) => {
+			eventListener = listener;
+			return () => undefined;
+		});
+		const listener = vi.fn();
+
+		const api = createPiGuiApi({ invoke, on });
+		api.subscribe(listener);
+
+		eventListener?.({ _tag: "receipt.emitted", eventId: "", sequence: 1, receipt: "bad", requestId: "request-1" });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(listener).not.toHaveBeenCalled();
+	});
+
+	test("decodes valid event payloads before delivering them to subscribers", async () => {
+		let eventListener: ((event: unknown) => void) | undefined;
+		const invoke = vi.fn();
+		const on = vi.fn((_channel, listener: (event: unknown) => void) => {
+			eventListener = listener;
+			return () => undefined;
+		});
+		const listener = vi.fn();
+
+		const api = createPiGuiApi({ invoke, on });
+		api.subscribe(listener);
+
+		eventListener?.(
+			new ReceiptEmitted({
+				eventId: eventIdFromString("event-1"),
+				sequence: 1,
+				receipt: "app.bootstrap.completed",
+				requestId: requestIdFromString("request-1"),
+			}),
+		);
+
+		await vi.waitFor(() => {
+			expect(listener).toHaveBeenCalledWith(
+				expect.objectContaining({ _tag: "receipt.emitted", receipt: "app.bootstrap.completed" }),
+			);
+		});
+	});
+
+	test("normalizes malformed invoke results into InternalIpcError envelopes", async () => {
+		const invoke = vi.fn().mockResolvedValue({ ok: true, requestId: "", data: {} });
+		const on = vi.fn();
+		const api = createPiGuiApi({ invoke, on });
+
+		const result = await api.invoke(new AppBootstrap({ requestId: requestIdFromString("request-1") }));
+
+		expect(result).toEqual({
+			ok: false,
+			requestId: "request-1",
+			error: expect.objectContaining({
+				_tag: "InternalIpcError",
+				message: "Invalid IPC response",
+			}),
+		});
 	});
 });

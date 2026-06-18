@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
-import type { AppInfo } from "../../shared/contracts.ts";
-
-type LoadState = { status: "loading" } | { status: "ready"; appInfo: AppInfo } | { status: "failed"; message: string };
+import { loadBootstrapState, type LoadState } from "./bootstrap-loader.ts";
 
 export function App() {
 	const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
@@ -9,18 +7,9 @@ export function App() {
 	useEffect(() => {
 		let isMounted = true;
 
-		window.piGui.getAppInfo().then(
-			(appInfo) => {
-				if (isMounted) {
-					setLoadState({ status: "ready", appInfo });
-				}
-			},
-			(error: unknown) => {
-				if (isMounted) {
-					setLoadState({ status: "failed", message: getErrorMessage(error) });
-				}
-			},
-		);
+		void loadBootstrapState(window.piGui).then((nextLoadState) => {
+			if (isMounted) setLoadState(nextLoadState);
+		});
 
 		return () => {
 			isMounted = false;
@@ -89,9 +78,4 @@ export function App() {
 			</section>
 		</main>
 	);
-}
-
-function getErrorMessage(error: unknown): string {
-	if (error instanceof Error) return error.message;
-	return "Unknown startup failure";
 }
