@@ -4,6 +4,7 @@ import { ExtensionUiRequestId, RequestId, SessionId, WorkspaceId } from "./ids.t
 import {
 	BootstrapSnapshot,
 	ModelThinkingSnapshot,
+	QueueRestoreSnapshot,
 	SessionCatalogSnapshot,
 	SettingsSummarySnapshot,
 	ThinkingLevel,
@@ -109,6 +110,15 @@ export class SessionCancelRun extends Schema.TaggedRequest<SessionCancelRun>()("
 	success: VoidSuccess,
 	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
 }) {}
+
+export class SessionRestoreQueuedMessages extends Schema.TaggedRequest<SessionRestoreQueuedMessages>()(
+	"session.restoreQueuedMessages",
+	{
+		failure: GuiError,
+		success: QueueRestoreSnapshot,
+		payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
+	},
+) {}
 
 export class SessionSetModel extends Schema.TaggedRequest<SessionSetModel>()("session.setModel", {
 	failure: GuiError,
@@ -242,6 +252,7 @@ export const GuiCommand = Schema.Union(
 	SessionClose,
 	SessionSendMessage,
 	SessionCancelRun,
+	SessionRestoreQueuedMessages,
 	SessionSetModel,
 	SessionSetThinkingLevel,
 	SessionGetTranscript,

@@ -32,12 +32,17 @@ export interface RuntimeAgentSession {
 		uiContext?: ExtensionUIContext;
 		onError?: (error: unknown) => void;
 	}): Promise<void>;
+	clearQueue(): { steering: string[]; followUp: string[] };
+	followUpMode: "all" | "one-at-a-time";
 	getAvailableThinkingLevels(): ThinkingLevel[];
+	getFollowUpMessages(): readonly string[];
+	getSteeringMessages(): readonly string[];
 	model?: RuntimeModel;
 	prompt(text: string, options?: PromptOptions): Promise<void>;
 	sessionManager?: RuntimeSessionManager;
 	setModel(model: RuntimeModel): Promise<void>;
 	setThinkingLevel(level: ThinkingLevel): void;
+	steeringMode: "all" | "one-at-a-time";
 	supportsThinking(): boolean;
 	subscribe(listener: (event: AgentSessionEvent) => void): () => void;
 	thinkingLevel: ThinkingLevel;

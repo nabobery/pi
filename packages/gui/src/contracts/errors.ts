@@ -137,6 +137,19 @@ export class SessionAlreadyOpen extends Schema.TaggedError<SessionAlreadyOpen>()
 	message: Schema.String,
 }) {}
 
+export class SessionOpenLimitReached extends Schema.TaggedError<SessionOpenLimitReached>()("SessionOpenLimitReached", {
+	workspaceId: Schema.String,
+	sessionId: Schema.optional(Schema.String),
+	maxOpenSessions: Schema.Number,
+	message: Schema.String,
+}) {}
+
+export class SessionRuntimeNotOpen extends Schema.TaggedError<SessionRuntimeNotOpen>()("SessionRuntimeNotOpen", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	message: Schema.String,
+}) {}
+
 export class SessionTranscriptReadFailed extends Schema.TaggedError<SessionTranscriptReadFailed>()(
 	"SessionTranscriptReadFailed",
 	{
@@ -170,6 +183,16 @@ export class SessionCancelFailed extends Schema.TaggedError<SessionCancelFailed>
 	message: Schema.String,
 	cause: Schema.optional(Schema.String),
 }) {}
+
+export class SessionQueueRestoreFailed extends Schema.TaggedError<SessionQueueRestoreFailed>()(
+	"SessionQueueRestoreFailed",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
 
 export class SessionRunNotActive extends Schema.TaggedError<SessionRunNotActive>()("SessionRunNotActive", {
 	workspaceId: Schema.String,
@@ -308,10 +331,13 @@ export const GuiError = Schema.Union(
 	SessionRuntimeCloseFailed,
 	SessionRuntimeBindFailed,
 	SessionAlreadyOpen,
+	SessionOpenLimitReached,
+	SessionRuntimeNotOpen,
 	SessionTranscriptReadFailed,
 	SessionPromptRejected,
 	SessionPromptFailed,
 	SessionCancelFailed,
+	SessionQueueRestoreFailed,
 	SessionRunNotActive,
 	SessionModelNotFound,
 	SessionModelAuthUnavailable,

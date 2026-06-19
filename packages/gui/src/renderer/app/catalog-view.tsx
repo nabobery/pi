@@ -6,7 +6,7 @@ import type {
 	TimelineSnapshot,
 	WorkspaceSnapshot,
 } from "../../contracts/index.ts";
-import type { GuiCatalogStore } from "./app-store.ts";
+import type { CatalogViewState, GuiCatalogStore } from "./app-store.ts";
 
 export function WorkspaceSection({
 	store,
@@ -46,11 +46,15 @@ export function WorkspaceSection({
 }
 
 export function SessionSection({
+	activityBySessionKey,
+	runtimeOverlaysBySessionKey,
 	store,
 	pending,
 	selectedWorkspace,
 	sessionCatalog,
 }: {
+	activityBySessionKey: CatalogViewState["activityBySessionKey"];
+	runtimeOverlaysBySessionKey: CatalogViewState["runtimeOverlaysBySessionKey"];
 	store: GuiCatalogStore;
 	pending: boolean;
 	selectedWorkspace: WorkspaceSnapshot | undefined;
@@ -99,6 +103,8 @@ export function SessionSection({
 			{sessions.length === 0 ? <p className="empty-copy">No sessions.</p> : null}
 			<SessionList
 				store={store}
+				activityBySessionKey={activityBySessionKey}
+				runtimeOverlaysBySessionKey={runtimeOverlaysBySessionKey}
 				sessions={activeSessions}
 				selectedSessionId={sessionCatalog?.selectedSessionId}
 				isArchived={false}
@@ -108,6 +114,8 @@ export function SessionSection({
 					<summary>Archived ({archivedSessions.length})</summary>
 					<SessionList
 						store={store}
+						activityBySessionKey={activityBySessionKey}
+						runtimeOverlaysBySessionKey={runtimeOverlaysBySessionKey}
 						sessions={archivedSessions}
 						selectedSessionId={sessionCatalog?.selectedSessionId}
 						isArchived
@@ -176,11 +184,15 @@ export function MainPane({
 }
 
 function SessionList({
+	activityBySessionKey,
+	runtimeOverlaysBySessionKey,
 	store,
 	sessions,
 	selectedSessionId,
 	isArchived,
 }: {
+	activityBySessionKey: CatalogViewState["activityBySessionKey"];
+	runtimeOverlaysBySessionKey: CatalogViewState["runtimeOverlaysBySessionKey"];
 	store: GuiCatalogStore;
 	sessions: readonly SessionSnapshot[];
 	selectedSessionId: string | undefined;
@@ -209,59 +221,94 @@ function SessionList({
 
 	return (
 		<div className="list" role="list">
-			{sessions.map((session) => (
-				<div
-					key={`${session.workspaceId}:${session.id}`}
-					className={session.id === selectedSessionId ? "session-row session-row--selected" : "session-row"}
-				>
-					<button
-						type="button"
-						className="session-open"
-						onClick={() => void store.openSession(session.workspaceId, session.id)}
+			{sessions.map((session) => {
+				const activity = activityBySessionKey[`${session.workspaceId}:${session.id}`];
+				const runtimeOverlay = runtimeOverlaysBySessionKey[`${session.workspaceId}:${session.id}`];
+				const queueCount = activity?.queueCount ?? 0;
+				const isRunning = session.status === "running" || session.status === "cancelling";
+				const isRuntimeOpen = runtimeOverlay?.isOpen ?? false;
+				return (
+					<div
+						key={`${session.workspaceId}:${session.id}`}
+						className={session.id === selectedSessionId ? "session-row session-row--selected" : "session-row"}
 					>
-						<span>{session.title}</span>
-						<span className="session-preview">{session.preview || formatTime(session.updatedAt)}</span>
-						<span className="session-meta">
-							{session.status} - {session.messageCount} messages
-						</span>
-					</button>
-					{editingSessionId === session.id ? (
-						<form className="rename-form" onSubmit={(event) => submitRename(event, session)}>
-							<input
-								aria-label="Session title"
-								value={draftTitle}
-								onChange={(event) => setDraftTitle(event.currentTarget.value)}
-								onKeyDown={(event) => {
-									if (event.key === "Escape") cancelRename();
-								}}
-							/>
-							<button type="submit" className="row-action" disabled={!draftTitle.trim()}>
-								Save
+						<button
+							type="button"
+							className="session-open"
+							onClick={() => void store.openSession(session.workspaceId, session.id)}
+						>
+							<span className="session-title-line">
+								<span>{session.title}</span>
+								<span className="session-badges" aria-label="Session activity">
+									{activity?.hasUnread ? <span className="session-badge">Unread</span> : null}
+									{activity?.needsInput ? (
+										<span className="session-badge session-badge--input">Input</span>
+									) : null}
+									{queueCount > 0 ? <span className="session-badge">{queueCount} queued</span> : null}
+								</span>
+							</span>
+							<span className="session-preview">{session.preview || formatTime(session.updatedAt)}</span>
+							<span className="session-meta">
+								{session.status} - {session.messageCount} messages
+							</span>
+						</button>
+						{editingSessionId === session.id ? (
+							<form className="rename-form" onSubmit={(event) => submitRename(event, session)}>
+								<input
+									aria-label="Session title"
+									value={draftTitle}
+									onChange={(event) => setDraftTitle(event.currentTarget.value)}
+									onKeyDown={(event) => {
+										if (event.key === "Escape") cancelRename();
+									}}
+								/>
+								<button type="submit" className="row-action" disabled={!draftTitle.trim()}>
+									Save
+								</button>
+								<button type="button" className="row-action" onClick={cancelRename}>
+									Cancel
+								</button>
+							</form>
+						) : (
+							<button type="button" className="row-action" onClick={() => startRename(session)}>
+								Rename
 							</button>
-							<button type="button" className="row-action" onClick={cancelRename}>
+						)}
+						{isRunning ? (
+							<button
+								type="button"
+								className="row-action"
+								disabled={session.status === "cancelling"}
+								onClick={() => void store.cancelRun(session.workspaceId, session.id)}
+							>
 								Cancel
 							</button>
-						</form>
-					) : (
-						<button type="button" className="row-action" onClick={() => startRename(session)}>
-							Rename
+						) : null}
+						{!isArchived && isRuntimeOpen ? (
+							<button
+								type="button"
+								className="row-action"
+								onClick={() => void store.closeSession(session.workspaceId, session.id)}
+							>
+								Close
+							</button>
+						) : null}
+						<button
+							type="button"
+							className="row-action"
+							onClick={() => {
+								if (isArchived) {
+									void store.unarchiveSession(session.workspaceId, session.id);
+									return;
+								}
+								void store.archiveSession(session.workspaceId, session.id);
+							}}
+						>
+							{isArchived ? "Restore" : "Archive"}
 						</button>
-					)}
-					<button
-						type="button"
-						className="row-action"
-						onClick={() => {
-							if (isArchived) {
-								void store.unarchiveSession(session.workspaceId, session.id);
-								return;
-							}
-							void store.archiveSession(session.workspaceId, session.id);
-						}}
-					>
-						{isArchived ? "Restore" : "Archive"}
-					</button>
-				</div>
-			))}
+					</div>
+				);
+			})}
 		</div>
 	);
 }

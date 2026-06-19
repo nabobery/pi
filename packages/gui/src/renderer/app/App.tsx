@@ -9,6 +9,7 @@ import {
 	Composer,
 	ExtensionUiInlineState,
 	ExtensionUiLayer,
+	QueuePanel,
 	RuntimeControls,
 	SettingsTrustPanel,
 } from "./app-panels.tsx";
@@ -77,6 +78,7 @@ export function ReadyApp({
 		selectedWorkspace && selectedSession ? `${selectedWorkspace.id}:${selectedSession.id}` : undefined;
 	const draft = selectedKey ? (state.composerDrafts[selectedKey] ?? "") : "";
 	const modelThinking = selectedKey ? state.modelThinkingBySessionKey[selectedKey] : undefined;
+	const selectedQueue = selectedKey ? state.queuesBySessionKey[selectedKey] : undefined;
 	const extensionUi = selectedKey ? state.extensionUiBySessionKey[selectedKey] : undefined;
 	const settingsSummary = selectedWorkspace ? state.settingsSummaryByWorkspaceId[selectedWorkspace.id] : undefined;
 	const trustStatus = selectedWorkspace ? state.trustStatusByWorkspaceId[selectedWorkspace.id] : undefined;
@@ -119,6 +121,8 @@ export function ReadyApp({
 					selectedWorkspace={selectedWorkspace}
 				/>
 				<SessionSection
+					activityBySessionKey={state.activityBySessionKey}
+					runtimeOverlaysBySessionKey={state.runtimeOverlaysBySessionKey}
 					store={store}
 					pending={state.pending}
 					selectedWorkspace={selectedWorkspace}
@@ -155,6 +159,13 @@ export function ReadyApp({
 				) : null}
 				<MainPane session={selectedSession} timeline={selectedTimeline} />
 				{extensionUi ? <ExtensionUiInlineState extensionUi={extensionUi} /> : null}
+				<QueuePanel
+					queue={selectedQueue}
+					onRestore={() => {
+						if (!selectedWorkspace || !selectedSession) return;
+						void store.restoreQueuedMessages(selectedWorkspace.id, selectedSession.id);
+					}}
+				/>
 				<Composer
 					appMode={loadState.appInfo.mode}
 					draft={draft}

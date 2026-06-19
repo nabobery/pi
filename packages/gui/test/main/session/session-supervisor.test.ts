@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import {
 	SessionCancelFailed,
+	SessionOpenLimitReached,
 	SessionRuntimeNotFound,
 	SessionRuntimeCloseFailed,
 	SessionRunNotActive,
@@ -70,6 +71,40 @@ describe("SessionSupervisor", () => {
 			sessionId: "session-1",
 			entries: [{ id: "entry-1", kind: "user", text: "hello" }],
 		});
+	});
+
+	test("opening an already-open runtime only refreshes catalog selection", async () => {
+		const fixture = createSupervisorFixture();
+
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+
+		expect(fixture.driver.openSession).toHaveBeenCalledTimes(1);
+		expect(fixture.catalogService.openSession).toHaveBeenCalledTimes(2);
+	});
+
+	test("rejects opening a new runtime after the configured runtime limit", async () => {
+		const fixture = createSupervisorFixture({ maxOpenSessions: 1 });
+
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		fixture.catalogService.openSession.mockClear();
+
+		await expect(
+			fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-2")),
+		).rejects.toBeInstanceOf(SessionOpenLimitReached);
+		expect(fixture.driver.openSession).toHaveBeenCalledTimes(1);
+		expect(fixture.catalogService.openSession).not.toHaveBeenCalled();
+	});
+
+	test("rejects creating a session after the configured runtime limit before mutating the catalog", async () => {
+		const fixture = createSupervisorFixture({ maxOpenSessions: 1 });
+
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+
+		await expect(fixture.supervisor.createSession(workspaceIdFromString("workspace-a"))).rejects.toBeInstanceOf(
+			SessionOpenLimitReached,
+		);
+		expect(fixture.catalogService.createSession).not.toHaveBeenCalled();
 	});
 
 	test("close unsubscribes, disposes, removes the runtime record, and emits closed", async () => {
@@ -323,6 +358,69 @@ describe("SessionSupervisor", () => {
 		},
 	);
 
+	test("runtime queue updates include full queue snapshots and activity state", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		fixture.events.length = 0;
+
+		fixture.emitRuntimeEvent({ type: "queue_update", steering: ["steer"], followUp: ["follow"] });
+
+		expect(fixture.events).toEqual([
+			expect.objectContaining({
+				_tag: "queue.updated",
+				workspaceId: "workspace-a",
+				sessionId: "session-1",
+				steeringCount: 1,
+				followUpCount: 1,
+				steeringMessages: [{ index: 0, kind: "steering", text: "steer" }],
+				followUpMessages: [{ index: 0, kind: "followUp", text: "follow" }],
+				steeringMode: "all",
+				followUpMode: "all",
+			}),
+			expect.objectContaining({
+				_tag: "session.activityUpdated",
+				activity: expect.objectContaining({
+					workspaceId: "workspace-a",
+					sessionId: "session-1",
+					queueCount: 2,
+				}),
+			}),
+		]);
+	});
+
+	test("restores queued messages through the driver and relies on the runtime queue update", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		fixture.driver.restoreQueuedMessages = vi.fn(async (handle) => ({
+			workspaceId: handle.workspaceId,
+			sessionId: handle.sessionId,
+			restoredMessages: [{ index: 0, kind: "steering" as const, text: "queued steer" }],
+			queue: {
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				steeringMessages: [],
+				followUpMessages: [],
+				steeringCount: 0,
+				followUpCount: 0,
+				steeringMode: "all" as const,
+				followUpMode: "all" as const,
+			},
+		}));
+		fixture.events.length = 0;
+
+		const restored = await fixture.supervisor.restoreQueuedMessages(
+			workspaceIdFromString("workspace-a"),
+			sessionIdFromString("session-1"),
+		);
+
+		expect(restored.restoredMessages).toEqual([{ index: 0, kind: "steering", text: "queued steer" }]);
+		expect(fixture.driver.restoreQueuedMessages).toHaveBeenCalledTimes(1);
+		expect(fixture.events).toEqual([]);
+		fixture.emitRuntimeEvent({ type: "queue_update", steering: [], followUp: [] });
+		expect(fixture.events.map((event) => event._tag)).toEqual(["queue.updated", "session.activityUpdated"]);
+		expect(fixture.events[0]).toMatchObject({ _tag: "queue.updated", steeringCount: 0, followUpCount: 0 });
+	});
+
 	test("delivery mode send requires an active run", async () => {
 		const fixture = createSupervisorFixture();
 		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
@@ -402,6 +500,7 @@ describe("SessionSupervisor", () => {
 function createSupervisorFixture(
 	options: {
 		extensionHostUiService?: ConstructorParameters<typeof SessionSupervisor>[0]["extensionHostUiService"];
+		maxOpenSessions?: number;
 	} = {},
 ) {
 	const workspaceCatalog: WorkspaceCatalogSnapshot = {
@@ -428,15 +527,18 @@ function createSupervisorFixture(
 	};
 	const catalogService = {
 		createSession: vi.fn((workspaceId) => Promise.resolve(createSessionCatalog(workspaceId))),
+		getSessionCatalog: vi.fn((workspaceId) => Promise.resolve(createSessionCatalog(workspaceId))),
 		getWorkspaceCatalog: vi.fn(() => Promise.resolve(workspaceCatalog)),
-		openSession: vi.fn((workspaceId) => Promise.resolve(createSessionCatalog(workspaceId))),
+		openSession: vi.fn((workspaceId, sessionId) => Promise.resolve(createSessionCatalog(workspaceId, sessionId))),
 	};
 	const unsubscribe = vi.fn();
 	let runtimeListener: ((event: unknown) => void) | undefined;
 	let resolvePromptCompletion: (() => void) | undefined;
 	let rejectPromptCompletion: ((error: unknown) => void) | undefined;
 	const driver: SessionDriver = {
-		openSession: vi.fn(async (request) => createHandle(request.workspaceId, request.workspacePath)),
+		openSession: vi.fn(async (request) =>
+			createHandle(request.workspaceId, request.workspacePath, deriveSessionId(request.sessionFilePath)),
+		),
 		cancelRun: vi.fn(async () => undefined),
 		closeSession: vi.fn(async () => undefined),
 		getModelThinking: vi.fn(async (handle) => ({
@@ -445,6 +547,16 @@ function createSupervisorFixture(
 			thinkingLevel: "off" as const,
 			availableThinkingLevels: ["off" as const],
 			models: [],
+		})),
+		getQueue: vi.fn(async (handle) => ({
+			workspaceId: handle.workspaceId,
+			sessionId: handle.sessionId,
+			steeringMessages: [],
+			followUpMessages: [],
+			steeringCount: 0,
+			followUpCount: 0,
+			steeringMode: "all" as const,
+			followUpMode: "all" as const,
 		})),
 		getTranscript: vi.fn(
 			async (handle): Promise<TimelineSnapshot> => ({
@@ -477,6 +589,21 @@ function createSupervisorFixture(
 					resolve({ completion });
 				}),
 		),
+		restoreQueuedMessages: vi.fn(async (handle) => ({
+			workspaceId: handle.workspaceId,
+			sessionId: handle.sessionId,
+			restoredMessages: [],
+			queue: {
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				steeringMessages: [],
+				followUpMessages: [],
+				steeringCount: 0,
+				followUpCount: 0,
+				steeringMode: "all" as const,
+				followUpMode: "all" as const,
+			},
+		})),
 		subscribe: vi.fn((_handle, listener) => {
 			runtimeListener = listener;
 			return unsubscribe;
@@ -495,6 +622,7 @@ function createSupervisorFixture(
 	};
 
 	return {
+		catalogService,
 		driver,
 		emitRuntimeEvent: (event: unknown) => runtimeListener?.(event),
 		events,
@@ -506,53 +634,71 @@ function createSupervisorFixture(
 			driver,
 			eventBus,
 			...(options.extensionHostUiService ? { extensionHostUiService: options.extensionHostUiService } : {}),
+			...(options.maxOpenSessions ? { maxOpenSessions: options.maxOpenSessions } : {}),
 		}),
 		unsubscribe,
 	};
 }
 
-function createSessionCatalog(workspaceId: string): SessionCatalogSnapshot {
+function createSessionCatalog(
+	workspaceId: string,
+	sessionId = sessionIdFromString("session-1"),
+): SessionCatalogSnapshot {
 	return {
 		workspaceId: workspaceIdFromString(workspaceId),
-		selectedSessionId: sessionIdFromString("session-1"),
+		selectedSessionId: sessionId,
 		sessions: [
 			{
-				id: sessionIdFromString("session-1"),
+				id: sessionId,
 				workspaceId: workspaceIdFromString(workspaceId),
 				title: "Session",
 				status: "idle",
 				updatedAt: "2026-06-18T00:00:00.000Z",
 				preview: "",
 				messageCount: 1,
-				sessionFilePath: `/tmp/${workspaceId}/session-1.jsonl`,
+				sessionFilePath: `/tmp/${workspaceId}/${sessionId}.jsonl`,
 			},
 		],
 	};
 }
 
-function createHandle(workspaceId: string, workspacePath: string): RuntimeSessionHandle {
+function createHandle(
+	workspaceId: string,
+	workspacePath: string,
+	sessionId = sessionIdFromString("session-1"),
+): RuntimeSessionHandle {
 	return {
-		key: `${workspaceId}:session-1`,
+		key: `${workspaceId}:${sessionId}`,
 		runtime: {
 			session: {
 				abort: vi.fn(async () => undefined),
 				bindExtensions: vi.fn(),
+				clearQueue: vi.fn(() => ({ steering: [], followUp: [] })),
+				followUpMode: "all",
 				getAvailableThinkingLevels: vi.fn(() => ["off" as const]),
+				getFollowUpMessages: vi.fn(() => []),
+				getSteeringMessages: vi.fn(() => []),
 				thinkingLevel: "off" as const,
 				setModel: vi.fn(async () => undefined),
 				setThinkingLevel: vi.fn(),
+				steeringMode: "all",
 				supportsThinking: vi.fn(() => false),
 				prompt: vi.fn(async () => undefined),
 				subscribe: vi.fn(() => vi.fn()),
 			},
 			dispose: vi.fn(),
 		},
-		sessionFilePath: `/tmp/${workspaceId}/session-1.jsonl`,
-		sessionId: sessionIdFromString("session-1"),
-		sessionManager: { getEntries: () => [], getSessionId: () => "session-1" },
+		sessionFilePath: `/tmp/${workspaceId}/${sessionId}.jsonl`,
+		sessionId,
+		sessionManager: { getEntries: () => [], getSessionId: () => sessionId },
 		workspaceId: workspaceIdFromString(workspaceId),
 		workspacePath,
 	};
+}
+
+function deriveSessionId(sessionFilePath: string): ReturnType<typeof sessionIdFromString> {
+	const fileName = sessionFilePath.slice(sessionFilePath.lastIndexOf("/") + 1);
+	return sessionIdFromString(fileName.slice(0, -".jsonl".length));
 }
 
 async function waitForEvent(events: readonly GuiEvent[], tag: GuiEvent["_tag"]): Promise<void> {

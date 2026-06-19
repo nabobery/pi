@@ -13,6 +13,7 @@ import {
 	type SessionId,
 	SessionOpen,
 	SessionRename,
+	SessionRestoreQueuedMessages,
 	SessionSendMessage,
 	SessionSetModel,
 	SessionSetThinkingLevel,
@@ -25,6 +26,9 @@ import {
 	SettingsRevealProjectFile,
 	type SettingsSummarySnapshot,
 	type ModelThinkingSnapshot,
+	type QueueRestoreSnapshot,
+	type QueueSnapshot,
+	type SessionActivitySnapshot,
 	type ThinkingLevel,
 	type TimelineSnapshot,
 	TrustGetStatus,
@@ -37,6 +41,7 @@ import {
 	decodeGuiCommandResult,
 	decodeGuiEvent,
 	decodeModelThinkingSnapshot,
+	decodeQueueRestoreSnapshot,
 	decodeSessionCatalogSnapshot,
 	decodeSettingsSummarySnapshot,
 	decodeTimelineSnapshot,
@@ -48,6 +53,18 @@ import {
 	type WorkspaceId,
 	requestIdFromString,
 } from "../../contracts/index.ts";
+import {
+	applyQueueRestore,
+	applyRuntimeOverlay,
+	applySessionActivityUpdate,
+	clearUnread,
+	markNeedsInput,
+	markSessionActivity,
+	mergeSessionCatalog,
+	sessionKey as timelineKey,
+	setSessionStatus,
+	withRuntimeOverlay,
+} from "./session-state-projections.ts";
 
 export interface RendererCatalogApi {
 	invoke(command: GuiCommand): Promise<GuiCommandResult>;
@@ -63,13 +80,21 @@ export interface CatalogViewState {
 	workspaceCatalog: WorkspaceCatalogSnapshot;
 	sessionCatalogs: Readonly<Record<string, SessionCatalogSnapshot>>;
 	timelines: Readonly<Record<string, TimelineSnapshot>>;
+	queuesBySessionKey: Readonly<Record<string, QueueSnapshot>>;
 	composerDrafts: Readonly<Record<string, string>>;
 	modelThinkingBySessionKey: Readonly<Record<string, ModelThinkingSnapshot>>;
 	settingsSummaryByWorkspaceId: Readonly<Record<string, SettingsSummarySnapshot>>;
 	trustStatusByWorkspaceId: Readonly<Record<string, TrustStatusSnapshot>>;
 	extensionUiBySessionKey: Readonly<Record<string, ExtensionUiSessionState>>;
+	runtimeOverlaysBySessionKey: Readonly<Record<string, SessionRuntimeOverlay>>;
+	activityBySessionKey: Readonly<Record<string, SessionActivitySnapshot>>;
 	error: string | undefined;
 	pending: boolean;
+}
+
+export interface SessionRuntimeOverlay {
+	status: SessionSnapshot["status"];
+	isOpen: boolean;
 }
 
 export interface ExtensionUiSessionState {
@@ -105,6 +130,7 @@ export interface GuiCatalogStore {
 	): Promise<void>;
 	revealSettingsFile(workspaceId: WorkspaceId, scope: "global" | "project"): Promise<void>;
 	renameSession(workspaceId: WorkspaceId, sessionId: SessionId, title: string): Promise<void>;
+	restoreQueuedMessages(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	selectWorkspace(workspaceId: WorkspaceId): Promise<void>;
 	sendMessage(
 		workspaceId: WorkspaceId,
@@ -135,11 +161,14 @@ export function createGuiCatalogStore(
 		workspaceCatalog,
 		sessionCatalogs: {},
 		timelines: {},
+		queuesBySessionKey: {},
 		composerDrafts: {},
 		modelThinkingBySessionKey: {},
 		settingsSummaryByWorkspaceId: {},
 		trustStatusByWorkspaceId: {},
 		extensionUiBySessionKey: {},
+		runtimeOverlaysBySessionKey: {},
+		activityBySessionKey: {},
 		error: options.initialError,
 		pending: false,
 	};
@@ -220,6 +249,21 @@ export function createGuiCatalogStore(
 			),
 		renameSession: (workspaceId, sessionId, title) =>
 			invokeVoid(new SessionRename({ requestId: nextRequestId("session.rename"), workspaceId, sessionId, title })),
+		restoreQueuedMessages: async (workspaceId, sessionId) => {
+			setState({ ...state, error: undefined, pending: true });
+			const command = new SessionRestoreQueuedMessages({
+				requestId: nextRequestId("session.restoreQueuedMessages"),
+				workspaceId,
+				sessionId,
+			});
+			const result = await api.invoke(command);
+			if (!result.ok) {
+				setState({ ...state, error: result.error.message, pending: false });
+				return;
+			}
+			const restored = await decodeQueueRestore(result.data);
+			setState({ ...(restored ? applyQueueRestore(state, restored) : state), pending: false });
+		},
 		selectWorkspace: (workspaceId) =>
 			invokeVoid(new WorkspaceSelect({ requestId: nextRequestId("workspace.select"), workspaceId })),
 		sendMessage: (workspaceId, sessionId, message, deliveryMode) =>
@@ -325,11 +369,12 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 	if (event._tag === "workspace.synced") {
 		return {
 			...state,
-			sessionCatalogs: { ...state.sessionCatalogs, [event.workspaceId]: event.sessions },
+			sessionCatalogs: { ...state.sessionCatalogs, [event.workspaceId]: mergeSessionCatalog(state, event.sessions) },
 		};
 	}
 	if (event._tag === "session.catalogUpdated") {
 		const previous = state.sessionCatalogs[event.workspaceId];
+		const sessions = event.sessions.map((session) => applyRuntimeOverlay(state, session));
 		return {
 			...state,
 			sessionCatalogs: {
@@ -337,14 +382,14 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 				[event.workspaceId]: {
 					workspaceId: event.workspaceId,
 					selectedSessionId: previous?.selectedSessionId,
-					sessions: event.sessions,
+					sessions,
 				},
 			},
 		};
 	}
 	if (event._tag === "session.selected") {
 		const previous = state.sessionCatalogs[event.workspaceId];
-		return {
+		const selectedState = {
 			...state,
 			sessionCatalogs: {
 				...state.sessionCatalogs,
@@ -355,17 +400,31 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 				},
 			},
 		};
+		return clearUnread(selectedState, event.workspaceId, event.sessionId);
 	}
 	if (event._tag === "session.opened" || event._tag === "session.statusChanged") {
-		return upsertSession(state, event.session);
+		return upsertSession(withRuntimeOverlay(state, event.session), event.session);
 	}
 	if (event._tag === "session.closed") {
 		const key = timelineKey(event.workspaceId, event.sessionId);
 		const previous = state.sessionCatalogs[event.workspaceId];
 		const { [key]: _closedTimeline, ...timelines } = state.timelines;
+		const { [key]: _closedQueue, ...queuesBySessionKey } = state.queuesBySessionKey;
 		const { [key]: _closedModelThinking, ...modelThinkingBySessionKey } = state.modelThinkingBySessionKey;
 		const { [key]: _closedExtensionUi, ...extensionUiBySessionKey } = state.extensionUiBySessionKey;
-		if (!previous) return { ...state, timelines, modelThinkingBySessionKey, extensionUiBySessionKey };
+		const { [key]: _closedOverlay, ...runtimeOverlaysBySessionKey } = state.runtimeOverlaysBySessionKey;
+		const { [key]: _closedActivity, ...activityBySessionKey } = state.activityBySessionKey;
+		if (!previous) {
+			return {
+				...state,
+				timelines,
+				queuesBySessionKey,
+				modelThinkingBySessionKey,
+				extensionUiBySessionKey,
+				runtimeOverlaysBySessionKey,
+				activityBySessionKey,
+			};
+		}
 		const sessions: SessionSnapshot[] = [];
 		for (const session of previous.sessions) {
 			sessions.push(session.id === event.sessionId ? { ...session, status: "closed" } : session);
@@ -373,8 +432,11 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 		return {
 			...state,
 			timelines,
+			queuesBySessionKey,
 			modelThinkingBySessionKey,
 			extensionUiBySessionKey,
+			runtimeOverlaysBySessionKey,
+			activityBySessionKey,
 			sessionCatalogs: {
 				...state.sessionCatalogs,
 				[event.workspaceId]: {
@@ -385,55 +447,86 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 		};
 	}
 	if (event._tag === "run.started") {
-		return setSessionStatus(state, event.workspaceId, event.sessionId, "running");
+		return markSessionActivity(setSessionStatus(state, event.workspaceId, event.sessionId, "running"), event);
 	}
 	if (event._tag === "timeline.messageDelta") {
-		return appendAssistantDelta(state, event.workspaceId, event.sessionId, event.runId, event.text);
+		return markSessionActivity(
+			appendAssistantDelta(state, event.workspaceId, event.sessionId, event.runId, event.text),
+			event,
+		);
 	}
 	if (event._tag === "tool.started") {
-		return upsertToolEntry(state, event.workspaceId, event.sessionId, {
-			id: `tool:${event.toolCallId}`,
-			kind: "tool",
-			text: `${event.toolName} started`,
-			toolCallId: event.toolCallId,
-			toolName: event.toolName,
-			isLive: true,
-		});
+		return markSessionActivity(
+			upsertToolEntry(state, event.workspaceId, event.sessionId, {
+				id: `tool:${event.toolCallId}`,
+				kind: "tool",
+				text: `${event.toolName} started`,
+				toolCallId: event.toolCallId,
+				toolName: event.toolName,
+				isLive: true,
+			}),
+			event,
+		);
 	}
 	if (event._tag === "tool.updated") {
-		return updateToolEntry(state, event.workspaceId, event.sessionId, event.toolCallId, {
-			text: event.text,
-			isLive: true,
-		});
+		return markSessionActivity(
+			updateToolEntry(state, event.workspaceId, event.sessionId, event.toolCallId, {
+				text: event.text,
+				isLive: true,
+			}),
+			event,
+		);
 	}
 	if (event._tag === "tool.finished") {
-		return updateToolEntry(state, event.workspaceId, event.sessionId, event.toolCallId, {
-			isLive: false,
-			isError: event.isError,
-		});
+		return markSessionActivity(
+			updateToolEntry(state, event.workspaceId, event.sessionId, event.toolCallId, {
+				isLive: false,
+				isError: event.isError,
+			}),
+			event,
+		);
 	}
 	if (event._tag === "run.completed") {
 		const readyState = setSessionStatus(state, event.workspaceId, event.sessionId, "ready");
 		if (!event.timeline) return readyState;
+		const markedState = markSessionActivity(readyState, event);
 		return {
-			...readyState,
+			...markedState,
 			timelines: {
-				...readyState.timelines,
+				...markedState.timelines,
 				[timelineKey(event.workspaceId, event.sessionId)]: event.timeline,
 			},
 		};
 	}
 	if (event._tag === "run.failed") {
 		const failedState = setSessionStatus(state, event.workspaceId, event.sessionId, "failed");
-		return appendTimelineEntry({ ...failedState, error: event.error.message }, event.workspaceId, event.sessionId, {
-			id: `error:${event.runId}`,
-			kind: "error",
-			text: event.error.message,
-			isError: true,
-		});
+		return markSessionActivity(
+			appendTimelineEntry({ ...failedState, error: event.error.message }, event.workspaceId, event.sessionId, {
+				id: `error:${event.runId}`,
+				kind: "error",
+				text: event.error.message,
+				isError: true,
+			}),
+			event,
+		);
 	}
 	if (event._tag === "run.cancelled") {
-		return setSessionStatus(state, event.workspaceId, event.sessionId, "ready");
+		return markSessionActivity(setSessionStatus(state, event.workspaceId, event.sessionId, "ready"), event);
+	}
+	if (event._tag === "queue.updated") {
+		return markSessionActivity(
+			{
+				...state,
+				queuesBySessionKey: {
+					...state.queuesBySessionKey,
+					[timelineKey(event.workspaceId, event.sessionId)]: event.queue,
+				},
+			},
+			event,
+		);
+	}
+	if (event._tag === "session.activityUpdated") {
+		return applySessionActivityUpdate(state, event.activity);
 	}
 	if (event._tag === "modelThinking.updated") {
 		return {
@@ -463,16 +556,30 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 		};
 	}
 	if (event._tag === "extensionUi.requested") {
-		return upsertExtensionUiState(state, event.request.workspaceId, event.request.sessionId, (previous) => ({
-			...previous,
-			requests: [...previous.requests, event.request],
-		}));
+		return markNeedsInput(
+			upsertExtensionUiState(state, event.request.workspaceId, event.request.sessionId, (previous) => ({
+				...previous,
+				requests: [...previous.requests, event.request],
+			})),
+			event.request.workspaceId,
+			event.request.sessionId,
+			true,
+			event.sequence,
+		);
 	}
 	if (event._tag === "extensionUi.resolved") {
-		return upsertExtensionUiState(state, event.workspaceId, event.sessionId, (previous) => ({
+		const nextState = upsertExtensionUiState(state, event.workspaceId, event.sessionId, (previous) => ({
 			...previous,
 			requests: previous.requests.filter((request) => request.id !== event.extensionUiRequestId),
 		}));
+		const key = timelineKey(event.workspaceId, event.sessionId);
+		return markNeedsInput(
+			nextState,
+			event.workspaceId,
+			event.sessionId,
+			(nextState.extensionUiBySessionKey[key]?.requests.length ?? 0) > 0,
+			event.sequence,
+		);
 	}
 	if (event._tag === "extensionUi.updated") {
 		const update = event.update;
@@ -520,7 +627,10 @@ async function applyResult(state: CatalogViewState, data: unknown): Promise<Cata
 	if (sessionCatalog) {
 		return {
 			...state,
-			sessionCatalogs: { ...state.sessionCatalogs, [sessionCatalog.workspaceId]: sessionCatalog },
+			sessionCatalogs: {
+				...state.sessionCatalogs,
+				[sessionCatalog.workspaceId]: mergeSessionCatalog(state, sessionCatalog),
+			},
 		};
 	}
 	const timeline = await decodeTimeline(data);
@@ -563,6 +673,8 @@ async function applyResult(state: CatalogViewState, data: unknown): Promise<Cata
 			},
 		};
 	}
+	const queueRestore = await decodeQueueRestore(data);
+	if (queueRestore) return applyQueueRestore(state, queueRestore);
 	return state;
 }
 
@@ -614,7 +726,16 @@ async function decodeTrustStatus(data: unknown): Promise<TrustStatusSnapshot | u
 	}
 }
 
+async function decodeQueueRestore(data: unknown): Promise<QueueRestoreSnapshot | undefined> {
+	try {
+		return await decodeQueueRestoreSnapshot(data);
+	} catch {
+		return undefined;
+	}
+}
+
 function upsertSession(state: CatalogViewState, session: SessionCatalogSnapshot["sessions"][number]): CatalogViewState {
+	session = applyRuntimeOverlay(state, session);
 	const previous = state.sessionCatalogs[session.workspaceId];
 	if (!previous) {
 		return {
@@ -639,30 +760,6 @@ function upsertSession(state: CatalogViewState, session: SessionCatalogSnapshot[
 				sessions: exists
 					? previous.sessions.map((entry) => (entry.id === session.id ? session : entry))
 					: [session, ...previous.sessions],
-			},
-		},
-	};
-}
-
-function setSessionStatus(
-	state: CatalogViewState,
-	workspaceId: WorkspaceId,
-	sessionId: SessionId,
-	status: SessionSnapshot["status"],
-): CatalogViewState {
-	const previous = state.sessionCatalogs[workspaceId];
-	if (!previous) return state;
-	const sessions: SessionSnapshot[] = [];
-	for (const session of previous.sessions) {
-		sessions.push(session.id === sessionId ? Object.assign({}, session, { status }) : session);
-	}
-	return {
-		...state,
-		sessionCatalogs: {
-			...state.sessionCatalogs,
-			[workspaceId]: {
-				...previous,
-				sessions,
 			},
 		},
 	};
@@ -770,10 +867,6 @@ function emptyExtensionUiSessionState(): ExtensionUiSessionState {
 		title: undefined,
 		compatibilityIssues: [],
 	};
-}
-
-function timelineKey(workspaceId: WorkspaceId, sessionId: SessionId): string {
-	return `${workspaceId}:${sessionId}`;
 }
 
 function nextRequestId(prefix: string) {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type {
 	ExtensionUiRequestSnapshot,
 	ModelThinkingSnapshot,
+	QueueSnapshot,
 	SessionId,
 	SessionSnapshot,
 	WorkspaceId,
@@ -137,6 +138,45 @@ export function Composer({
 				</div>
 			</div>
 		</form>
+	);
+}
+
+export function QueuePanel({ queue, onRestore }: { queue: QueueSnapshot | undefined; onRestore(): void }) {
+	const steering = queue?.steeringMessages ?? [];
+	const followUp = queue?.followUpMessages ?? [];
+	const totalCount = steering.length + followUp.length;
+	if (!queue && totalCount === 0) return null;
+	return (
+		<section className="queue-panel" aria-label="Queued messages">
+			<div className="queue-panel__header">
+				<div>
+					<p className="section-label">Queue</p>
+					<p className="muted">
+						{totalCount} pending - steering {queue?.steeringMode ?? "all"}, follow-up{" "}
+						{queue?.followUpMode ?? "all"}
+					</p>
+				</div>
+				<button type="button" disabled={totalCount === 0} onClick={onRestore}>
+					Restore to composer
+				</button>
+			</div>
+			<QueueGroup title="Steering" messages={steering} />
+			<QueueGroup title="Follow-up" messages={followUp} />
+		</section>
+	);
+}
+
+function QueueGroup({ messages, title }: { messages: QueueSnapshot["steeringMessages"]; title: string }) {
+	if (messages.length === 0) return null;
+	return (
+		<div className="queue-group">
+			<p className="queue-group__title">{title}</p>
+			<ol>
+				{messages.map((message) => (
+					<li key={`${message.kind}:${message.index}`}>{message.text}</li>
+				))}
+			</ol>
+		</div>
 	);
 }
 

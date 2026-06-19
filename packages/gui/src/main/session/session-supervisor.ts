@@ -1,5 +1,4 @@
 import {
-	SessionAlreadyOpen,
 	ModelThinkingUpdated,
 	QueueUpdated,
 	ReceiptEmitted,
@@ -10,8 +9,11 @@ import {
 	SessionCancelFailed,
 	SessionClosed,
 	SessionFileMissing,
+	SessionActivityUpdated,
+	SessionOpenLimitReached,
 	SessionOpened,
 	SessionPromptFailed,
+	SessionRuntimeNotOpen,
 	SessionRuntimeNotFound,
 	SessionRunNotActive,
 	SessionStatusChanged,
@@ -23,6 +25,8 @@ import {
 	type GuiEvent,
 	type ExtensionUiRequestId,
 	type ModelThinkingSnapshot,
+	type QueueSnapshot,
+	type QueueRestoreSnapshot,
 	type RequestId,
 	type RunId,
 	type SessionCatalogSnapshot,
@@ -34,12 +38,14 @@ import {
 	type WorkspaceId,
 	runIdFromString,
 } from "../../contracts/index.ts";
+import { projectQueueSnapshot } from "./queue-projection.ts";
 import { createRuntimeSessionKey, type RuntimeSessionKey } from "./session-key.ts";
 import type { ExtensionHostUiService, ExtensionUiResponse } from "./extension-host-ui-service.ts";
 import type { RuntimeSessionEvent, RuntimeSessionHandle, SessionDriver } from "./session-driver.ts";
 
 export interface SessionCatalogRuntimeService {
 	createSession(workspaceId: WorkspaceId): Promise<SessionCatalogSnapshot>;
+	getSessionCatalog(workspaceId: WorkspaceId): Promise<SessionCatalogSnapshot>;
 	getWorkspaceCatalog(): Promise<WorkspaceCatalogSnapshot>;
 	openSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<SessionCatalogSnapshot>;
 }
@@ -58,11 +64,15 @@ export interface SessionSupervisorOptions {
 	driver: SessionDriver;
 	eventBus: SessionSupervisorEventBus;
 	extensionHostUiService?: Pick<ExtensionHostUiService, "cancelSessionRequests" | "respond" | "updateEditorText">;
+	maxOpenSessions?: number;
 }
 
 interface ManagedSessionRecord {
 	activeRunId?: RunId;
 	handle: RuntimeSessionHandle;
+	lastActivitySequence: number;
+	needsInput: boolean;
+	queueSnapshot: QueueSnapshot;
 	session: SessionSnapshot;
 	unsubscribe: () => void;
 }
@@ -72,6 +82,7 @@ export class SessionSupervisor {
 	private readonly driver: SessionDriver;
 	private readonly eventBus: SessionSupervisorEventBus;
 	private readonly extensionHostUiService: SessionSupervisorOptions["extensionHostUiService"];
+	private readonly maxOpenSessions: number;
 	private readonly records = new Map<RuntimeSessionKey, ManagedSessionRecord>();
 	private runSequence = 0;
 
@@ -80,6 +91,7 @@ export class SessionSupervisor {
 		this.driver = options.driver;
 		this.eventBus = options.eventBus;
 		this.extensionHostUiService = options.extensionHostUiService;
+		this.maxOpenSessions = options.maxOpenSessions ?? 4;
 	}
 
 	hasRuntime(workspaceId: WorkspaceId, sessionId: SessionId): boolean {
@@ -87,6 +99,7 @@ export class SessionSupervisor {
 	}
 
 	async createSession(workspaceId: WorkspaceId): Promise<SessionCatalogSnapshot> {
+		this.assertCanOpenNewRuntime(workspaceId);
 		const catalog = await this.catalogService.createSession(workspaceId);
 		const session = findSelectedSession(catalog);
 		await this.openRuntimeForSession(session);
@@ -94,6 +107,12 @@ export class SessionSupervisor {
 	}
 
 	async openSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<SessionCatalogSnapshot> {
+		if (this.hasRuntime(workspaceId, sessionId)) {
+			return this.catalogService.openSession(workspaceId, sessionId);
+		}
+		this.assertCanOpenNewRuntime(workspaceId, sessionId);
+		const existingCatalog = await this.catalogService.getSessionCatalog(workspaceId);
+		findSession(existingCatalog, sessionId);
 		const catalog = await this.catalogService.openSession(workspaceId, sessionId);
 		const session = findSession(catalog, sessionId);
 		await this.openRuntimeForSession(session);
@@ -210,6 +229,21 @@ export class SessionSupervisor {
 		return this.driver.getTranscript(record.handle);
 	}
 
+	async restoreQueuedMessages(workspaceId: WorkspaceId, sessionId: SessionId): Promise<QueueRestoreSnapshot> {
+		const key = createRuntimeSessionKey(workspaceId, sessionId);
+		const record = this.records.get(key);
+		if (!record) {
+			throw new SessionRuntimeNotOpen({
+				workspaceId,
+				sessionId,
+				message: `Session runtime ${key} is not open`,
+			});
+		}
+		const restored = await this.driver.restoreQueuedMessages(record.handle);
+		record.queueSnapshot = restored.queue;
+		return restored;
+	}
+
 	async getModelThinking(workspaceId: WorkspaceId, sessionId: SessionId): Promise<ModelThinkingSnapshot> {
 		const snapshot = await this.driver.getModelThinking(this.getRecord(workspaceId, sessionId).handle);
 		this.publishModelThinking(snapshot);
@@ -278,10 +312,14 @@ export class SessionSupervisor {
 	private async openRuntimeForSession(session: SessionSnapshot): Promise<void> {
 		const key = createRuntimeSessionKey(session.workspaceId, session.id);
 		if (this.records.has(key)) {
-			throw new SessionAlreadyOpen({
+			return;
+		}
+		if (this.records.size >= this.maxOpenSessions) {
+			throw new SessionOpenLimitReached({
 				workspaceId: session.workspaceId,
 				sessionId: session.id,
-				message: `Session runtime ${key} is already open`,
+				maxOpenSessions: this.maxOpenSessions,
+				message: `Pi GUI can keep at most ${this.maxOpenSessions} runtime sessions open`,
 			});
 		}
 		if (!session.sessionFilePath) {
@@ -302,7 +340,15 @@ export class SessionSupervisor {
 			});
 			const readySession = withStatus(session, "ready");
 			const unsubscribe = this.driver.subscribe(handle, (event) => this.handleRuntimeEvent(key, event));
-			this.records.set(key, { handle, session: readySession, unsubscribe });
+			const queueSnapshot = await this.driver.getQueue(handle);
+			this.records.set(key, {
+				handle,
+				lastActivitySequence: 0,
+				needsInput: false,
+				queueSnapshot,
+				session: readySession,
+				unsubscribe,
+			});
 			this.eventBus.publish(new SessionOpened({ ...this.eventBus.nextEventBase(), session: readySession }));
 			this.publishModelThinking(await this.driver.getModelThinking(handle));
 			this.publishStatus(session, "ready");
@@ -362,15 +408,12 @@ export class SessionSupervisor {
 		if (!record) return;
 		const runId = record.activeRunId;
 		if (event.type === "queue_update") {
-			this.eventBus.publish(
-				new QueueUpdated({
-					...this.eventBus.nextEventBase(),
-					workspaceId: record.handle.workspaceId,
-					sessionId: record.handle.sessionId,
-					steeringCount: event.steering.length,
-					followUpCount: event.followUp.length,
-				}),
-			);
+			const queue = projectQueueSnapshot(record.handle, event, {
+				steeringMode: record.handle.runtime.session.steeringMode,
+				followUpMode: record.handle.runtime.session.followUpMode,
+			});
+			record.queueSnapshot = queue;
+			this.publishQueue(record, queue);
 			return;
 		}
 		if (event.type === "thinking_level_changed") {
@@ -470,6 +513,54 @@ export class SessionSupervisor {
 	private createRunId(workspaceId: WorkspaceId, sessionId: SessionId): RunId {
 		this.runSequence += 1;
 		return runIdFromString(`${workspaceId}:${sessionId}:run-${this.runSequence}`);
+	}
+
+	private assertCanOpenNewRuntime(workspaceId: WorkspaceId, sessionId?: SessionId): void {
+		if (this.records.size < this.maxOpenSessions) return;
+		throw new SessionOpenLimitReached({
+			workspaceId,
+			...(sessionId ? { sessionId } : {}),
+			maxOpenSessions: this.maxOpenSessions,
+			message: `Pi GUI can keep at most ${this.maxOpenSessions} runtime sessions open`,
+		});
+	}
+
+	private publishQueue(record: ManagedSessionRecord, queue: QueueSnapshot): void {
+		const event = new QueueUpdated({
+			...this.eventBus.nextEventBase(),
+			workspaceId: record.handle.workspaceId,
+			sessionId: record.handle.sessionId,
+			steeringCount: queue.steeringCount,
+			followUpCount: queue.followUpCount,
+			steeringMessages: queue.steeringMessages,
+			followUpMessages: queue.followUpMessages,
+			steeringMode: queue.steeringMode,
+			followUpMode: queue.followUpMode,
+			queue,
+		});
+		this.eventBus.publish(event);
+		record.lastActivitySequence = event.sequence;
+		this.publishActivity(record);
+	}
+
+	private publishActivity(record: ManagedSessionRecord): void {
+		this.eventBus.publish(
+			new SessionActivityUpdated({
+				...this.eventBus.nextEventBase(),
+				activity: this.activitySnapshot(record),
+			}),
+		);
+	}
+
+	private activitySnapshot(record: ManagedSessionRecord) {
+		return {
+			workspaceId: record.handle.workspaceId,
+			sessionId: record.handle.sessionId,
+			hasUnread: false,
+			needsInput: record.needsInput,
+			queueCount: record.queueSnapshot.steeringCount + record.queueSnapshot.followUpCount,
+			lastActivitySequence: record.lastActivitySequence,
+		};
 	}
 }
 

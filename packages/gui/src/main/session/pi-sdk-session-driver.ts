@@ -5,6 +5,7 @@ import {
 	SessionModelSetFailed,
 	SessionCancelFailed,
 	SessionPromptRejected,
+	SessionQueueRestoreFailed,
 	SessionRuntimeBindFailed,
 	SessionRuntimeCloseFailed,
 	SessionRuntimeCreateFailed,
@@ -14,12 +15,14 @@ import {
 	sessionIdFromString,
 	type ModelOptionSnapshot,
 	type ModelThinkingSnapshot,
+	type QueueSnapshot,
 	type SessionId,
 	type ThinkingLevel,
 	type TimelineSnapshot,
 	type WorkspaceId,
 } from "../../contracts/index.ts";
 import { createRuntimeSessionKey } from "./session-key.ts";
+import { projectQueueRestoreSnapshot, projectQueueSnapshot } from "./queue-projection.ts";
 import { projectTimelineSnapshot } from "./timeline-projection.ts";
 import type {
 	OpenRuntimeSessionRequest,
@@ -155,6 +158,35 @@ export class PiSdkSessionDriver implements SessionDriver {
 				sessionId: handle.sessionId,
 				sessionFilePath: handle.sessionFilePath,
 				message: "Failed to read Pi session transcript",
+				cause: getErrorMessage(error),
+			});
+		}
+	}
+
+	async getQueue(handle: RuntimeSessionHandle): Promise<QueueSnapshot> {
+		return projectQueueSnapshot(
+			handle,
+			{
+				steering: handle.runtime.session.getSteeringMessages(),
+				followUp: handle.runtime.session.getFollowUpMessages(),
+			},
+			{
+				steeringMode: handle.runtime.session.steeringMode,
+				followUpMode: handle.runtime.session.followUpMode,
+			},
+		);
+	}
+
+	async restoreQueuedMessages(handle: RuntimeSessionHandle) {
+		try {
+			const restored = handle.runtime.session.clearQueue();
+			const queue = await this.getQueue(handle);
+			return projectQueueRestoreSnapshot(handle, restored, queue);
+		} catch (error) {
+			throw new SessionQueueRestoreFailed({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				message: "Failed to restore queued Pi session messages",
 				cause: getErrorMessage(error),
 			});
 		}

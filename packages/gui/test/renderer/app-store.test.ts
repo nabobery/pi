@@ -4,6 +4,7 @@ import {
 	ExtensionUiResolved,
 	ExtensionUiUpdated,
 	ExtensionUiUpdateEditorText,
+	QueueUpdated,
 	SessionCatalogUpdated,
 	RunCancelled,
 	RunCompleted,
@@ -11,14 +12,18 @@ import {
 	RunStarted,
 	SessionClosed,
 	SessionCancelRun,
+	SessionActivityUpdated,
 	SessionSelected,
 	SessionSendMessage,
+	SessionRestoreQueuedMessages,
 	SessionPromptFailed,
 	SessionStatusChanged,
 	TimelineMessageDelta,
 	ToolFinished,
 	ToolStarted,
 	ToolUpdated,
+	type QueueSnapshot,
+	type SessionSnapshot,
 	type TimelineSnapshot,
 	type GuiEvent,
 	InternalIpcError,
@@ -451,6 +456,223 @@ describe("createGuiCatalogStore", () => {
 		expect(store.getSnapshot().sessionCatalogs[workspaceId].sessions[0].status).toBe("ready");
 	});
 
+	test("stores queue state per session and restores queued messages into the matching composer draft", async () => {
+		const listeners: Array<(event: GuiEvent) => void> = [];
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionA = sessionIdFromString("session-a");
+		const sessionB = sessionIdFromString("session-b");
+		const invoke = vi.fn().mockResolvedValue({
+			ok: true,
+			requestId: requestIdFromString("request-1"),
+			data: {
+				workspaceId,
+				sessionId: sessionA,
+				restoredMessages: [{ index: 0, text: "queued steer", kind: "steering" }],
+				queue: queueSnapshot(workspaceId, sessionA, [], []),
+			},
+		});
+		const store = createGuiCatalogStore(
+			{
+				invoke,
+				subscribe: (listener) => {
+					listeners.push(listener);
+					return () => undefined;
+				},
+			},
+			{ revision: catalogRevisionFromString("0"), selectedWorkspaceId: workspaceId, workspaces: [] },
+		);
+		listeners[0](
+			new SessionCatalogUpdated({
+				eventId: eventIdFromString("event-1"),
+				sequence: 1,
+				workspaceId,
+				sessions: [
+					sessionSnapshot(workspaceId, sessionA, "ready"),
+					sessionSnapshot(workspaceId, sessionB, "ready"),
+				],
+			}),
+		);
+		listeners[0](
+			new SessionSelected({
+				eventId: eventIdFromString("event-2"),
+				sequence: 2,
+				workspaceId,
+				sessionId: sessionB,
+			}),
+		);
+		listeners[0](
+			new QueueUpdated({
+				eventId: eventIdFromString("event-3"),
+				sequence: 3,
+				workspaceId,
+				sessionId: sessionA,
+				steeringCount: 1,
+				followUpCount: 1,
+				steeringMessages: [{ index: 0, text: "queued steer", kind: "steering" }],
+				followUpMessages: [{ index: 0, text: "queued follow", kind: "followUp" }],
+				steeringMode: "all",
+				followUpMode: "one-at-a-time",
+				queue: queueSnapshot(workspaceId, sessionA, ["queued steer"], ["queued follow"]),
+			}),
+		);
+
+		expect(store.getSnapshot().queuesBySessionKey["workspace-1:session-a"]).toMatchObject({
+			steeringCount: 1,
+			followUpCount: 1,
+		});
+		expect(store.getSnapshot().activityBySessionKey["workspace-1:session-a"].hasUnread).toBe(true);
+
+		listeners[0](
+			new SessionSelected({
+				eventId: eventIdFromString("event-4"),
+				sequence: 4,
+				workspaceId,
+				sessionId: sessionA,
+			}),
+		);
+		expect(store.getSnapshot().activityBySessionKey["workspace-1:session-a"].hasUnread).toBe(false);
+
+		store.setComposerDraft(workspaceId, sessionA, "existing");
+		await store.restoreQueuedMessages(workspaceId, sessionA);
+
+		expect(invoke).toHaveBeenCalledWith(expect.any(SessionRestoreQueuedMessages));
+		expect(store.getSnapshot().composerDrafts["workspace-1:session-a"]).toBe("existing\nqueued steer");
+		expect(store.getSnapshot().queuesBySessionKey["workspace-1:session-a"].steeringCount).toBe(0);
+	});
+
+	test("catalog updates preserve runtime overlays and background extension needs-input activity", () => {
+		const listeners: Array<(event: GuiEvent) => void> = [];
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionA = sessionIdFromString("session-a");
+		const sessionB = sessionIdFromString("session-b");
+		const store = createGuiCatalogStore(
+			{
+				invoke: vi.fn(),
+				subscribe: (listener) => {
+					listeners.push(listener);
+					return () => undefined;
+				},
+			},
+			{ revision: catalogRevisionFromString("0"), selectedWorkspaceId: workspaceId, workspaces: [] },
+		);
+		listeners[0](
+			new SessionCatalogUpdated({
+				eventId: eventIdFromString("event-1"),
+				sequence: 1,
+				workspaceId,
+				sessions: [
+					sessionSnapshot(workspaceId, sessionA, "ready"),
+					sessionSnapshot(workspaceId, sessionB, "ready"),
+				],
+			}),
+		);
+		listeners[0](
+			new SessionSelected({ eventId: eventIdFromString("event-2"), sequence: 2, workspaceId, sessionId: sessionB }),
+		);
+		listeners[0](
+			new RunStarted({
+				eventId: eventIdFromString("event-3"),
+				sequence: 3,
+				workspaceId,
+				sessionId: sessionA,
+				runId: runIdFromString("run-a"),
+			}),
+		);
+		listeners[0](
+			new ExtensionUiRequested({
+				eventId: eventIdFromString("event-4"),
+				sequence: 4,
+				request: {
+					id: extensionUiRequestIdFromString("extension-ui-a"),
+					workspaceId,
+					sessionId: sessionA,
+					kind: "input",
+					title: "Input",
+				},
+			}),
+		);
+		listeners[0](
+			new SessionCatalogUpdated({
+				eventId: eventIdFromString("event-5"),
+				sequence: 5,
+				workspaceId,
+				sessions: [sessionSnapshot(workspaceId, sessionA, "idle"), sessionSnapshot(workspaceId, sessionB, "ready")],
+			}),
+		);
+
+		const snapshot = store.getSnapshot();
+		expect(snapshot.sessionCatalogs[workspaceId].sessions[0]).toMatchObject({ id: sessionA, status: "running" });
+		expect(snapshot.activityBySessionKey["workspace-1:session-a"]).toMatchObject({
+			hasUnread: true,
+			needsInput: true,
+		});
+		expect(snapshot.sessionCatalogs[workspaceId].selectedSessionId).toBe(sessionB);
+	});
+
+	test("main activity updates preserve pending background extension needs-input state", () => {
+		const listeners: Array<(event: GuiEvent) => void> = [];
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionA = sessionIdFromString("session-a");
+		const sessionB = sessionIdFromString("session-b");
+		const store = createGuiCatalogStore(
+			{
+				invoke: vi.fn(),
+				subscribe: (listener) => {
+					listeners.push(listener);
+					return () => undefined;
+				},
+			},
+			{ revision: catalogRevisionFromString("0"), selectedWorkspaceId: workspaceId, workspaces: [] },
+		);
+		listeners[0](
+			new SessionCatalogUpdated({
+				eventId: eventIdFromString("event-1"),
+				sequence: 1,
+				workspaceId,
+				sessions: [
+					sessionSnapshot(workspaceId, sessionA, "ready"),
+					sessionSnapshot(workspaceId, sessionB, "ready"),
+				],
+			}),
+		);
+		listeners[0](
+			new SessionSelected({ eventId: eventIdFromString("event-2"), sequence: 2, workspaceId, sessionId: sessionB }),
+		);
+		listeners[0](
+			new ExtensionUiRequested({
+				eventId: eventIdFromString("event-3"),
+				sequence: 3,
+				request: {
+					id: extensionUiRequestIdFromString("extension-ui-a"),
+					workspaceId,
+					sessionId: sessionA,
+					kind: "input",
+					title: "Input",
+				},
+			}),
+		);
+		listeners[0](
+			new SessionActivityUpdated({
+				eventId: eventIdFromString("event-4"),
+				sequence: 4,
+				activity: {
+					workspaceId,
+					sessionId: sessionA,
+					hasUnread: false,
+					needsInput: false,
+					queueCount: 1,
+					lastActivitySequence: 4,
+				},
+			}),
+		);
+
+		expect(store.getSnapshot().activityBySessionKey["workspace-1:session-a"]).toMatchObject({
+			hasUnread: true,
+			needsInput: true,
+			queueCount: 1,
+		});
+	});
+
 	test("applies prompt failure and cancellation states", () => {
 		const listeners: Array<(event: GuiEvent) => void> = [];
 		const workspaceId = workspaceIdFromString("workspace-1");
@@ -719,3 +941,39 @@ describe("createGuiCatalogStore", () => {
 		expect(listener).not.toHaveBeenCalled();
 	});
 });
+
+function sessionSnapshot(
+	workspaceId: ReturnType<typeof workspaceIdFromString>,
+	sessionId: ReturnType<typeof sessionIdFromString>,
+	status: SessionSnapshot["status"],
+): SessionSnapshot {
+	return {
+		id: sessionId,
+		workspaceId,
+		title: `Session ${sessionId}`,
+		status,
+		updatedAt: "2026-06-19T00:00:00.000Z",
+		preview: "",
+		messageCount: 1,
+	};
+}
+
+function queueSnapshot(
+	workspaceId: ReturnType<typeof workspaceIdFromString>,
+	sessionId: ReturnType<typeof sessionIdFromString>,
+	steering: readonly string[],
+	followUp: readonly string[],
+): QueueSnapshot {
+	const steeringMessages = steering.map((text, index) => ({ index, text, kind: "steering" as const }));
+	const followUpMessages = followUp.map((text, index) => ({ index, text, kind: "followUp" as const }));
+	return {
+		workspaceId,
+		sessionId,
+		steeringMessages,
+		followUpMessages,
+		steeringCount: steeringMessages.length,
+		followUpCount: followUpMessages.length,
+		steeringMode: "all",
+		followUpMode: "one-at-a-time",
+	};
+}

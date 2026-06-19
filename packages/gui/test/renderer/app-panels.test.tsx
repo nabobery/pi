@@ -17,6 +17,7 @@ import {
 	Composer,
 	ExtensionUiInlineState,
 	ExtensionUiLayer,
+	QueuePanel,
 	RuntimeControls,
 	SettingsTrustPanel,
 } from "../../src/renderer/app/app-panels.tsx";
@@ -155,6 +156,31 @@ describe("renderer app panels", () => {
 		expect(store.openSettingsFile).toHaveBeenCalledWith(workspaceId, "project");
 		expect(store.revealSettingsFile).toHaveBeenCalledWith(workspaceId, "global");
 		expect(store.revealSettingsFile).toHaveBeenCalledWith(workspaceId, "project");
+	});
+
+	test("queue panel renders queued messages and restores them to the composer", async () => {
+		const restore = vi.fn();
+		const mounted = renderPanel(
+			<QueuePanel
+				queue={{
+					workspaceId,
+					sessionId,
+					steeringMessages: [{ index: 0, text: "Adjust plan", kind: "steering" }],
+					followUpMessages: [{ index: 0, text: "Then summarize", kind: "followUp" }],
+					steeringCount: 1,
+					followUpCount: 1,
+					steeringMode: "all",
+					followUpMode: "one-at-a-time",
+				}}
+				onRestore={restore}
+			/>,
+		);
+
+		expect(mounted.container.textContent).toContain("Adjust plan");
+		expect(mounted.container.textContent).toContain("Then summarize");
+		expect(mounted.container.textContent).toContain("steering all");
+		await click(buttonByText(mounted.container, "Restore to composer"));
+		expect(restore).toHaveBeenCalledOnce();
 	});
 
 	test("settings panel renders nothing without a selected workspace", () => {
@@ -481,6 +507,7 @@ function storeStub(): GuiCatalogStore {
 		renameSession: vi.fn().mockResolvedValue(undefined),
 		respondToExtensionUi: vi.fn().mockResolvedValue(undefined),
 		revealSettingsFile: vi.fn().mockResolvedValue(undefined),
+		restoreQueuedMessages: vi.fn().mockResolvedValue(undefined),
 		selectWorkspace: vi.fn().mockResolvedValue(undefined),
 		sendMessage: vi.fn().mockResolvedValue(true),
 		setComposerDraft: vi.fn(),

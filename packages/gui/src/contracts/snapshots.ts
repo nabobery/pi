@@ -113,6 +113,53 @@ export type SettingsSummarySnapshot = Schema.Schema.Type<typeof SettingsSummaryS
 export const decodeSettingsSummarySnapshot = (value: unknown): Promise<SettingsSummarySnapshot> =>
 	Effect.runPromise(Schema.decodeUnknown(SettingsSummarySnapshot)(value));
 
+export const QueueMode = Schema.Literal("all", "one-at-a-time");
+export type QueueMode = Schema.Schema.Type<typeof QueueMode>;
+
+export const QueueMessageKind = Schema.Literal("steering", "followUp");
+export type QueueMessageKind = Schema.Schema.Type<typeof QueueMessageKind>;
+
+export const QueueMessageSnapshot = Schema.Struct({
+	index: Schema.Number,
+	text: Schema.String,
+	kind: QueueMessageKind,
+});
+export type QueueMessageSnapshot = Schema.Schema.Type<typeof QueueMessageSnapshot>;
+
+export const QueueSnapshot = Schema.Struct({
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	steeringMessages: Schema.Array(QueueMessageSnapshot),
+	followUpMessages: Schema.Array(QueueMessageSnapshot),
+	steeringCount: Schema.Number,
+	followUpCount: Schema.Number,
+	steeringMode: QueueMode,
+	followUpMode: QueueMode,
+});
+export type QueueSnapshot = Schema.Schema.Type<typeof QueueSnapshot>;
+export const decodeQueueSnapshot = (value: unknown): Promise<QueueSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(QueueSnapshot)(value));
+
+export const QueueRestoreSnapshot = Schema.Struct({
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	restoredMessages: Schema.Array(QueueMessageSnapshot),
+	queue: QueueSnapshot,
+});
+export type QueueRestoreSnapshot = Schema.Schema.Type<typeof QueueRestoreSnapshot>;
+export const decodeQueueRestoreSnapshot = (value: unknown): Promise<QueueRestoreSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(QueueRestoreSnapshot)(value));
+
+export const SessionActivitySnapshot = Schema.Struct({
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	hasUnread: Schema.Boolean,
+	needsInput: Schema.Boolean,
+	queueCount: Schema.Number,
+	lastActivitySequence: Schema.Number,
+});
+export type SessionActivitySnapshot = Schema.Schema.Type<typeof SessionActivitySnapshot>;
+
 export const TrustStatusSnapshot = Schema.Struct({
 	workspaceId: WorkspaceId,
 	cwd: Schema.String,

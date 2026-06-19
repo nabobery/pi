@@ -5,6 +5,8 @@ import {
 	ExtensionUiRequestSnapshot,
 	ExtensionUiStateSnapshot,
 	ModelThinkingSnapshot,
+	QueueSnapshot,
+	SessionActivitySnapshot,
 	SessionCatalogSnapshot,
 	SessionSnapshot,
 	SettingsSummarySnapshot,
@@ -113,6 +115,16 @@ export class QueueUpdated extends Schema.TaggedClass<QueueUpdated>()("queue.upda
 	sessionId: SessionId,
 	steeringCount: Schema.Number,
 	followUpCount: Schema.Number,
+	steeringMessages: QueueSnapshot.fields.steeringMessages,
+	followUpMessages: QueueSnapshot.fields.followUpMessages,
+	steeringMode: QueueSnapshot.fields.steeringMode,
+	followUpMode: QueueSnapshot.fields.followUpMode,
+	queue: QueueSnapshot,
+}) {}
+
+export class SessionActivityUpdated extends Schema.TaggedClass<SessionActivityUpdated>()("session.activityUpdated", {
+	...EventBaseFields,
+	activity: SessionActivitySnapshot,
 }) {}
 
 export class RunStarted extends Schema.TaggedClass<RunStarted>()("run.started", {
@@ -205,6 +217,7 @@ export const GuiEvent = Schema.Union(
 	ToolUpdated,
 	ToolFinished,
 	QueueUpdated,
+	SessionActivityUpdated,
 	RunStarted,
 	RunCompleted,
 	RunFailed,

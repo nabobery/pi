@@ -38,6 +38,8 @@ describe("catalog view", () => {
 			<>
 				<WorkspaceSection store={storeStub()} workspaces={[]} selectedWorkspace={undefined} />
 				<SessionSection
+					activityBySessionKey={{}}
+					runtimeOverlaysBySessionKey={{}}
 					store={storeStub()}
 					pending={false}
 					selectedWorkspace={undefined}
@@ -59,6 +61,8 @@ describe("catalog view", () => {
 			<>
 				<WorkspaceSection store={storeStub()} workspaces={[workspace]} selectedWorkspace={workspace} />
 				<SessionSection
+					activityBySessionKey={{}}
+					runtimeOverlaysBySessionKey={{}}
 					store={storeStub()}
 					pending={false}
 					selectedWorkspace={workspace}
@@ -84,13 +88,80 @@ describe("catalog view", () => {
 		};
 
 		const markup = renderToStaticMarkup(
-			<SessionSection store={storeStub()} pending={false} selectedWorkspace={workspace} sessionCatalog={catalog} />,
+			<SessionSection
+				activityBySessionKey={{}}
+				runtimeOverlaysBySessionKey={{}}
+				store={storeStub()}
+				pending={false}
+				selectedWorkspace={workspace}
+				sessionCatalog={catalog}
+			/>,
 		);
 
 		expect(markup).toContain("Active session");
 		expect(markup).toContain("running - 2 messages");
 		expect(markup).toContain("Archived (1)");
 		expect(markup).toContain("Restore");
+	});
+
+	test("renders session activity badges and routes per-session runtime actions", async () => {
+		const store = storeStub();
+		const workspace = workspaceSnapshot({ missing: false });
+		const catalog: SessionCatalogSnapshot = {
+			workspaceId,
+			selectedSessionId: sessionId,
+			sessions: [sessionSnapshot({ id: sessionId, title: "Active session" })],
+		};
+		const mounted = renderView(
+			<SessionSection
+				activityBySessionKey={{
+					"workspace-1:session-1": {
+						workspaceId,
+						sessionId,
+						hasUnread: true,
+						needsInput: true,
+						queueCount: 2,
+						lastActivitySequence: 3,
+					},
+				}}
+				runtimeOverlaysBySessionKey={{ "workspace-1:session-1": { status: "running", isOpen: true } }}
+				store={store}
+				pending={false}
+				selectedWorkspace={workspace}
+				sessionCatalog={catalog}
+			/>,
+		);
+
+		expect(mounted.container.textContent).toContain("Unread");
+		expect(mounted.container.textContent).toContain("Input");
+		expect(mounted.container.textContent).toContain("2 queued");
+
+		await click(buttonByText(mounted.container, "Cancel"));
+		await click(buttonByText(mounted.container, "Close"));
+
+		expect(store.cancelRun).toHaveBeenCalledWith(workspaceId, sessionId);
+		expect(store.closeSession).toHaveBeenCalledWith(workspaceId, sessionId);
+	});
+
+	test("hides close action for catalog sessions without an open runtime", () => {
+		const workspace = workspaceSnapshot({ missing: false });
+		const catalog: SessionCatalogSnapshot = {
+			workspaceId,
+			selectedSessionId: sessionId,
+			sessions: [sessionSnapshot({ id: sessionId, title: "Idle session", status: "idle" })],
+		};
+		const mounted = renderView(
+			<SessionSection
+				activityBySessionKey={{}}
+				runtimeOverlaysBySessionKey={{}}
+				store={storeStub()}
+				pending={false}
+				selectedWorkspace={workspace}
+				sessionCatalog={catalog}
+			/>,
+		);
+
+		expect(buttonTextList(mounted.container)).not.toContain("Close");
 	});
 
 	test("renders transcript rows for user, assistant, tool, and error entries", () => {
@@ -139,7 +210,14 @@ describe("catalog view", () => {
 		const mounted = renderView(
 			<>
 				<WorkspaceSection store={store} workspaces={[workspace]} selectedWorkspace={workspace} />
-				<SessionSection store={store} pending={false} selectedWorkspace={workspace} sessionCatalog={catalog} />
+				<SessionSection
+					activityBySessionKey={{}}
+					runtimeOverlaysBySessionKey={{}}
+					store={store}
+					pending={false}
+					selectedWorkspace={workspace}
+					sessionCatalog={catalog}
+				/>
 			</>,
 		);
 
@@ -203,6 +281,10 @@ function buttonByText(container: HTMLElement, text: string): HTMLButtonElement {
 	throw new Error(`Expected button ${text}`);
 }
 
+function buttonTextList(container: HTMLElement): string[] {
+	return Array.from(container.querySelectorAll("button")).map((button) => button.textContent ?? "");
+}
+
 function form(container: HTMLElement): HTMLFormElement {
 	const element = container.querySelector("form");
 	if (!(element instanceof HTMLFormElement)) throw new Error("Expected form");
@@ -227,12 +309,17 @@ function workspaceSnapshot(options: { missing: boolean }): WorkspaceSnapshot {
 	};
 }
 
-function sessionSnapshot(options: { archivedAt?: string; id?: typeof sessionId; title?: string }): SessionSnapshot {
+function sessionSnapshot(options: {
+	archivedAt?: string;
+	id?: typeof sessionId;
+	status?: SessionSnapshot["status"];
+	title?: string;
+}): SessionSnapshot {
 	return {
 		id: options.id ?? sessionIdFromString(`session-${options.title ?? "active"}`),
 		workspaceId,
 		title: options.title ?? "Session",
-		status: "running",
+		status: options.status ?? "running",
 		updatedAt: "2026-06-19T00:00:00.000Z",
 		preview: "preview",
 		messageCount: 2,
@@ -257,6 +344,7 @@ function storeStub(): GuiCatalogStore {
 		renameSession: vi.fn().mockResolvedValue(undefined),
 		respondToExtensionUi: vi.fn().mockResolvedValue(undefined),
 		revealSettingsFile: vi.fn().mockResolvedValue(undefined),
+		restoreQueuedMessages: vi.fn().mockResolvedValue(undefined),
 		selectWorkspace: vi.fn().mockResolvedValue(undefined),
 		sendMessage: vi.fn().mockResolvedValue(true),
 		setComposerDraft: vi.fn(),

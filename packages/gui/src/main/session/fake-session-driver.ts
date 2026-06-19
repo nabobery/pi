@@ -1,9 +1,12 @@
 import {
 	type ModelThinkingSnapshot,
+	type QueueRestoreSnapshot,
+	type QueueSnapshot,
 	type SessionId,
 	type TimelineSnapshot,
 	sessionIdFromString,
 } from "../../contracts/index.ts";
+import { projectQueueRestoreSnapshot, projectQueueSnapshot } from "./queue-projection.ts";
 import { createRuntimeSessionKey } from "./session-key.ts";
 import type {
 	OpenRuntimeSessionRequest,
@@ -20,7 +23,9 @@ interface FakeRuntimeState {
 	activeRun: FakeActiveRun | undefined;
 	entries: TimelineSnapshot["entries"];
 	extensionUiContext?: ReturnType<ExtensionHostUiService["createContext"]>;
+	followUpQueue: string[];
 	listeners: Set<(event: RuntimeSessionEvent) => void>;
+	steeringQueue: string[];
 }
 
 interface FakeActiveRun {
@@ -62,7 +67,9 @@ export class FakeSessionDriver implements SessionDriver {
 			activeRun: undefined,
 			entries: [{ id: "fake-entry-1", kind: "user", text: "Fake session ready." }],
 			extensionUiContext: this.extensionHostUiService?.createContext(request.workspaceId, sessionId),
+			followUpQueue: [],
 			listeners: new Set(),
+			steeringQueue: [],
 		};
 		this.states.set(key, state);
 		return {
@@ -123,6 +130,21 @@ export class FakeSessionDriver implements SessionDriver {
 		};
 	}
 
+	async getQueue(handle: RuntimeSessionHandle): Promise<QueueSnapshot> {
+		const state = this.requireState(handle);
+		return queueSnapshot(handle, state);
+	}
+
+	async restoreQueuedMessages(handle: RuntimeSessionHandle): Promise<QueueRestoreSnapshot> {
+		const state = this.requireState(handle);
+		const restored = { steering: [...state.steeringQueue], followUp: [...state.followUpQueue] };
+		state.steeringQueue = [];
+		state.followUpQueue = [];
+		const queue = queueSnapshot(handle, state);
+		this.emit(handle, queueEvent(state));
+		return projectQueueRestoreSnapshot(handle, restored, queue);
+	}
+
 	async setModel(handle: RuntimeSessionHandle): Promise<ModelThinkingSnapshot> {
 		return this.getModelThinking(handle);
 	}
@@ -137,10 +159,16 @@ export class FakeSessionDriver implements SessionDriver {
 	): Promise<SendRuntimeMessageResult> {
 		const state = this.requireState(handle);
 		if (request.deliveryMode) {
+			if (request.deliveryMode === "steer") {
+				state.steeringQueue = [...state.steeringQueue, request.message];
+			} else {
+				state.followUpQueue = [...state.followUpQueue, request.message];
+			}
 			state.entries = [
 				...state.entries,
 				{ id: `fake-${state.entries.length + 1}`, kind: "user", text: request.message },
 			];
+			this.emit(handle, queueEvent(state));
 			return { completion: Promise.resolve() };
 		}
 
@@ -269,10 +297,20 @@ function createFakeRuntime(state: FakeRuntimeState): ManagedAgentRuntime {
 	const session: RuntimeAgentSession = {
 		abort: async () => undefined,
 		bindExtensions: async () => undefined,
+		clearQueue: () => {
+			const restored = { steering: [...state.steeringQueue], followUp: [...state.followUpQueue] };
+			state.steeringQueue = [];
+			state.followUpQueue = [];
+			return restored;
+		},
+		followUpMode: "all",
 		getAvailableThinkingLevels: () => ["off"],
+		getFollowUpMessages: () => state.followUpQueue,
+		getSteeringMessages: () => state.steeringQueue,
 		prompt: async () => undefined,
 		setModel: async () => undefined,
 		setThinkingLevel: () => undefined,
+		steeringMode: "all",
 		supportsThinking: () => false,
 		subscribe: (listener) => {
 			state.listeners.add(listener);
@@ -286,6 +324,18 @@ function createFakeRuntime(state: FakeRuntimeState): ManagedAgentRuntime {
 		session,
 		dispose: async () => undefined,
 	};
+}
+
+function queueSnapshot(handle: RuntimeSessionHandle, state: FakeRuntimeState): QueueSnapshot {
+	return projectQueueSnapshot(
+		handle,
+		{ steering: state.steeringQueue, followUp: state.followUpQueue },
+		{ steeringMode: "all", followUpMode: "all" },
+	);
+}
+
+function queueEvent(state: FakeRuntimeState): RuntimeSessionEvent {
+	return { type: "queue_update", steering: state.steeringQueue, followUp: state.followUpQueue };
 }
 
 function deriveSessionId(sessionFilePath: string): SessionId {

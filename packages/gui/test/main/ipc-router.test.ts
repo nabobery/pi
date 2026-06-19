@@ -13,6 +13,7 @@ import {
 	SessionGetTranscript,
 	SessionOpen,
 	SessionRename,
+	SessionRestoreQueuedMessages,
 	SessionSendMessage,
 	SessionUnarchive,
 	type TimelineSnapshot,
@@ -181,6 +182,7 @@ describe("createGuiInvokeHandler", () => {
 			),
 			openSession: vi.fn(async () => sessions),
 			respondToExtensionUi: vi.fn(),
+			restoreQueuedMessages: vi.fn(),
 			sendMessage: vi.fn(async () => undefined),
 			setModel: vi.fn(),
 			setThinkingLevel: vi.fn(),
@@ -253,6 +255,7 @@ describe("createGuiInvokeHandler", () => {
 				getTranscript: vi.fn(),
 				openSession: vi.fn(async () => sessions),
 				respondToExtensionUi: vi.fn(),
+				restoreQueuedMessages: vi.fn(),
 				sendMessage: vi.fn(async () => undefined),
 				setModel: vi.fn(),
 				setThinkingLevel: vi.fn(),
@@ -293,6 +296,7 @@ describe("createGuiInvokeHandler", () => {
 			getTranscript: vi.fn(),
 			openSession: vi.fn(),
 			respondToExtensionUi: vi.fn(),
+			restoreQueuedMessages: vi.fn(),
 			sendMessage: vi.fn(async () => undefined),
 			setModel: vi.fn(),
 			setThinkingLevel: vi.fn(),
@@ -343,6 +347,7 @@ describe("createGuiInvokeHandler", () => {
 			getTranscript: vi.fn(),
 			openSession: vi.fn(),
 			respondToExtensionUi: vi.fn(),
+			restoreQueuedMessages: vi.fn(),
 			sendMessage: vi.fn(async () => undefined),
 			setModel: vi.fn(),
 			setThinkingLevel: vi.fn(),
@@ -370,6 +375,59 @@ describe("createGuiInvokeHandler", () => {
 		expect(sessionSupervisor.cancelRun).toHaveBeenCalledWith(workspaceId, sessionId);
 	});
 
+	test("routes queued message restore commands through the supervisor", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const restored = {
+			workspaceId,
+			sessionId,
+			restoredMessages: [{ index: 0, kind: "steering" as const, text: "queued" }],
+			queue: {
+				workspaceId,
+				sessionId,
+				steeringMessages: [],
+				followUpMessages: [],
+				steeringCount: 0,
+				followUpCount: 0,
+				steeringMode: "all" as const,
+				followUpMode: "all" as const,
+			},
+		};
+		const sessionSupervisor = {
+			cancelRun: vi.fn(async () => undefined),
+			closeSession: vi.fn(async () => undefined),
+			createSession: vi.fn(),
+			getModelThinking: vi.fn(),
+			getTranscript: vi.fn(),
+			openSession: vi.fn(),
+			respondToExtensionUi: vi.fn(),
+			restoreQueuedMessages: vi.fn(async () => restored),
+			sendMessage: vi.fn(async () => undefined),
+			setModel: vi.fn(),
+			setThinkingLevel: vi.fn(),
+			updateExtensionEditorText: vi.fn(),
+		};
+		const handler = createGuiInvokeHandler({
+			app,
+			eventBus: new RendererEventBus(),
+			mode: "test",
+			policy,
+			sessionSupervisor,
+		});
+
+		const result = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender: createSender() },
+			new SessionRestoreQueuedMessages({
+				requestId: requestIdFromString("request-1"),
+				workspaceId,
+				sessionId,
+			}),
+		);
+
+		expect(result).toEqual({ ok: true, requestId: "request-1", data: restored });
+		expect(sessionSupervisor.restoreQueuedMessages).toHaveBeenCalledWith(workspaceId, sessionId);
+	});
+
 	test("routes extension editor text mirror updates through the supervisor", async () => {
 		const workspaceId = workspaceIdFromString("workspace-1");
 		const sessionId = sessionIdFromString("session-1");
@@ -381,6 +439,7 @@ describe("createGuiInvokeHandler", () => {
 			getTranscript: vi.fn(),
 			openSession: vi.fn(),
 			respondToExtensionUi: vi.fn(),
+			restoreQueuedMessages: vi.fn(),
 			sendMessage: vi.fn(async () => undefined),
 			setModel: vi.fn(),
 			setThinkingLevel: vi.fn(),

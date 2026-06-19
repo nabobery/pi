@@ -1,6 +1,8 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent/runtime";
 import type {
 	ModelThinkingSnapshot,
+	QueueRestoreSnapshot,
+	QueueSnapshot,
 	SessionId,
 	ThinkingLevel,
 	TimelineSnapshot,
@@ -45,7 +47,9 @@ export interface SessionDriver {
 	cancelRun(handle: RuntimeSessionHandle): Promise<void>;
 	closeSession(handle: RuntimeSessionHandle): Promise<void>;
 	getModelThinking(handle: RuntimeSessionHandle): Promise<ModelThinkingSnapshot>;
+	getQueue(handle: RuntimeSessionHandle): Promise<QueueSnapshot>;
 	getTranscript(handle: RuntimeSessionHandle): Promise<TimelineSnapshot>;
+	restoreQueuedMessages(handle: RuntimeSessionHandle): Promise<QueueRestoreSnapshot>;
 	setModel(handle: RuntimeSessionHandle, provider: string, modelId: string): Promise<ModelThinkingSnapshot>;
 	setThinkingLevel(handle: RuntimeSessionHandle, level: ThinkingLevel): Promise<ModelThinkingSnapshot>;
 	sendMessage(handle: RuntimeSessionHandle, request: SendRuntimeMessageRequest): Promise<SendRuntimeMessageResult>;

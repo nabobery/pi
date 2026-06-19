@@ -53,6 +53,20 @@ describe("FakeSessionDriver", () => {
 		await expect(driver.sendMessage(handle, { message: "steer", deliveryMode: "steer" })).resolves.toEqual({
 			completion: expect.any(Promise),
 		});
+		await driver.sendMessage(handle, { message: "follow", deliveryMode: "followUp" });
+		await expect(driver.getQueue(handle)).resolves.toMatchObject({
+			steeringCount: 1,
+			followUpCount: 1,
+			steeringMessages: [{ text: "steer", kind: "steering" }],
+			followUpMessages: [{ text: "follow", kind: "followUp" }],
+		});
+		await expect(driver.restoreQueuedMessages(handle)).resolves.toMatchObject({
+			restoredMessages: [
+				{ text: "steer", kind: "steering" },
+				{ text: "follow", kind: "followUp" },
+			],
+			queue: { steeringCount: 0, followUpCount: 0 },
+		});
 		const delayed = await driver.sendMessage(handle, { message: FAKE_RUNTIME_PROMPTS.delay });
 		await driver.cancelRun(handle);
 		await driver.cancelRun(handle);

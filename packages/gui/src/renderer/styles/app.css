@@ -177,7 +177,7 @@ button:not(:disabled) {
 
 .session-row {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) auto auto;
+	grid-template-columns: minmax(0, 1fr) repeat(4, auto);
 	align-items: stretch;
 	gap: 4px;
 	border: 1px solid transparent;
@@ -191,6 +191,45 @@ button:not(:disabled) {
 	border: 0;
 	border-radius: 5px;
 	background: transparent;
+}
+
+.session-title-line {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	min-width: 0;
+}
+
+.session-title-line > span:first-child {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.session-badges {
+	display: flex;
+	flex: 0 0 auto;
+	flex-wrap: wrap;
+	gap: 4px;
+	justify-content: flex-end;
+}
+
+.session-badge {
+	border: 1px solid #c8c7bd;
+	border-radius: 999px;
+	background: #fbfbf7;
+	color: #5f675c;
+	padding: 1px 5px;
+	font-size: 10px;
+	font-weight: 650;
+	line-height: 1.4;
+	white-space: nowrap;
+}
+
+.session-badge--input {
+	border-color: #c6aa73;
+	color: #87641e;
 }
 
 .row-action {
@@ -409,6 +448,43 @@ button:not(:disabled) {
 	margin: 0;
 }
 
+.queue-panel {
+	display: grid;
+	gap: 10px;
+	border-top: 1px solid #dddcd4;
+	background: #fbfbf7;
+	padding: 12px 20px;
+}
+
+.queue-panel__header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.queue-group {
+	display: grid;
+	gap: 4px;
+}
+
+.queue-group__title {
+	margin: 0;
+	color: #77746a;
+	font-size: 12px;
+	font-weight: 650;
+}
+
+.queue-group ol {
+	display: grid;
+	gap: 4px;
+	margin: 0;
+	padding-left: 20px;
+	color: #22221f;
+	font-size: 13px;
+	line-height: 1.45;
+}
+
 .modal-backdrop {
 	position: fixed;
 	inset: 0;
@@ -488,6 +564,7 @@ button:not(:disabled) {
 
 	.timeline-header,
 	.runtime-controls,
+	.queue-panel__header,
 	.composer-status,
 	.composer-actions {
 		align-items: flex-start;

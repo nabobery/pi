@@ -26,6 +26,7 @@ import {
 	SessionGetTranscript,
 	SessionOpen,
 	SessionRename,
+	SessionRestoreQueuedMessages,
 	SessionSendMessage,
 	SessionSetModel,
 	SessionSetThinkingLevel,
@@ -83,6 +84,7 @@ export interface CreateGuiInvokeHandlerOptions {
 		| "getModelThinking"
 		| "getTranscript"
 		| "openSession"
+		| "restoreQueuedMessages"
 		| "respondToExtensionUi"
 		| "sendMessage"
 		| "setModel"
@@ -315,6 +317,12 @@ async function handleGuiCommand(
 			await options.sessionSupervisor.cancelRun(command.workspaceId, command.sessionId);
 			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
 			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
+		if (command instanceof SessionRestoreQueuedMessages && options.sessionSupervisor) {
+			const restored = await options.sessionSupervisor.restoreQueuedMessages(command.workspaceId, command.sessionId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: restored };
 		}
 
 		if (command instanceof SessionSetModel && options.sessionSupervisor) {
