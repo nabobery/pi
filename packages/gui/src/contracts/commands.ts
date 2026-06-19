@@ -5,8 +5,13 @@ import {
 	BootstrapSnapshot,
 	ModelThinkingSnapshot,
 	QueueRestoreSnapshot,
+	ResumeNameFilter,
+	ResumeScope,
+	ResumeSearchSnapshot,
+	ResumeSortMode,
 	SessionCatalogSnapshot,
 	SettingsSummarySnapshot,
+	SlashCommandCatalogSnapshot,
 	ThinkingLevel,
 	TimelineSnapshot,
 	TrustStatusSnapshot,
@@ -147,6 +152,53 @@ export class SessionGetTranscript extends Schema.TaggedRequest<SessionGetTranscr
 	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
 }) {}
 
+export class SessionGetSlashCommands extends Schema.TaggedRequest<SessionGetSlashCommands>()(
+	"session.getSlashCommands",
+	{
+		failure: GuiError,
+		success: SlashCommandCatalogSnapshot,
+		payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
+	},
+) {}
+
+export class ResumeSearch extends Schema.TaggedRequest<ResumeSearch>()("resume.search", {
+	failure: GuiError,
+	success: ResumeSearchSnapshot,
+	payload: {
+		requestId: RequestId,
+		workspaceId: WorkspaceId,
+		query: Schema.String,
+		scope: ResumeScope,
+		sortMode: ResumeSortMode,
+		nameFilter: ResumeNameFilter,
+		includeArchived: Schema.Boolean,
+	},
+}) {}
+
+export class ResumeOpen extends Schema.TaggedRequest<ResumeOpen>()("resume.open", {
+	failure: GuiError,
+	success: SessionCatalogSnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
+}) {}
+
+export class ResumeRename extends Schema.TaggedRequest<ResumeRename>()("resume.rename", {
+	failure: GuiError,
+	success: SessionCatalogSnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId, title: Schema.String },
+}) {}
+
+export class ResumeArchive extends Schema.TaggedRequest<ResumeArchive>()("resume.archive", {
+	failure: GuiError,
+	success: SessionCatalogSnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
+}) {}
+
+export class ResumeUnarchive extends Schema.TaggedRequest<ResumeUnarchive>()("resume.unarchive", {
+	failure: GuiError,
+	success: SessionCatalogSnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
+}) {}
+
 export class ExtensionUiRespond extends Schema.TaggedRequest<ExtensionUiRespond>()("extensionUi.respond", {
 	failure: GuiError,
 	success: VoidSuccess,
@@ -256,6 +308,12 @@ export const GuiCommand = Schema.Union(
 	SessionSetModel,
 	SessionSetThinkingLevel,
 	SessionGetTranscript,
+	SessionGetSlashCommands,
+	ResumeSearch,
+	ResumeOpen,
+	ResumeRename,
+	ResumeArchive,
+	ResumeUnarchive,
 	ExtensionUiRespond,
 	ExtensionUiUpdateEditorText,
 	SettingsGetSummary,

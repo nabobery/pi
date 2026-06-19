@@ -505,6 +505,146 @@ button:not(:disabled) {
 	box-shadow: 0 18px 42px rgb(34 34 31 / 16%);
 }
 
+.command-modal {
+	display: grid;
+	gap: 12px;
+	width: min(720px, 100%);
+	max-height: min(720px, calc(100dvh - 48px));
+	border: 1px solid #c8c7bd;
+	border-radius: 8px;
+	background: #ffffff;
+	padding: 18px;
+	box-shadow: 0 18px 42px rgb(34 34 31 / 16%);
+}
+
+.command-modal h3 {
+	margin: 0;
+	font-size: 18px;
+	line-height: 1.2;
+}
+
+.command-modal input,
+.command-modal select {
+	min-width: 0;
+	border: 1px solid #c8c7bd;
+	border-radius: 6px;
+	background: #ffffff;
+	color: #22221f;
+	padding: 8px 10px;
+}
+
+.modal-title-row,
+.picker-controls {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.picker-controls {
+	flex-wrap: wrap;
+	justify-content: flex-start;
+}
+
+.select-control {
+	display: grid;
+	gap: 4px;
+	min-width: 128px;
+	color: #77746a;
+	font-size: 12px;
+	font-weight: 650;
+}
+
+.toggle-control {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: #77746a;
+	font-size: 12px;
+	font-weight: 650;
+}
+
+.command-list {
+	display: grid;
+	gap: 6px;
+	overflow: auto;
+	max-height: 420px;
+	padding-right: 2px;
+}
+
+.command-list--tall {
+	max-height: 500px;
+}
+
+.command-row,
+.resume-row {
+	border: 1px solid transparent;
+	border-radius: 6px;
+	background: transparent;
+}
+
+.command-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	width: 100%;
+	color: #22221f;
+	text-align: left;
+}
+
+.command-row:disabled {
+	color: #9a978e;
+}
+
+.command-row--selected,
+.command-row:hover:not(:disabled),
+.command-row:focus-visible,
+.resume-row--selected,
+.resume-row:hover,
+.resume-row:focus-within {
+	border-color: #aaa89d;
+	background: #f0f0eb;
+}
+
+.command-row__main {
+	display: grid;
+	gap: 3px;
+	min-width: 0;
+}
+
+.command-row__main span:first-child {
+	font-weight: 650;
+}
+
+.command-row__main span:last-child,
+.command-row__meta {
+	overflow: hidden;
+	color: #77746a;
+	font-size: 12px;
+	line-height: 1.4;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.resume-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto auto;
+	align-items: center;
+	gap: 6px;
+	padding: 4px;
+}
+
+.resume-row__open {
+	display: grid;
+	gap: 4px;
+	min-width: 0;
+	border: 0;
+	background: transparent;
+	color: #22221f;
+	text-align: left;
+}
+
 .extension-modal h3,
 .extension-modal p {
 	margin: 0;

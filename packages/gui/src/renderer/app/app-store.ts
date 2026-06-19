@@ -29,6 +29,7 @@ import {
 	type QueueRestoreSnapshot,
 	type QueueSnapshot,
 	type SessionActivitySnapshot,
+	type SlashCommandCatalogSnapshot,
 	type ThinkingLevel,
 	type TimelineSnapshot,
 	TrustGetStatus,
@@ -65,6 +66,13 @@ import {
 	setSessionStatus,
 	withRuntimeOverlay,
 } from "./session-state-projections.ts";
+import {
+	createPhase9StoreActions,
+	emptyCommandPaletteState,
+	emptyResumePickerState,
+	type CommandPaletteState,
+	type ResumePickerState,
+} from "./phase9-store.ts";
 
 export interface RendererCatalogApi {
 	invoke(command: GuiCommand): Promise<GuiCommandResult>;
@@ -88,6 +96,10 @@ export interface CatalogViewState {
 	extensionUiBySessionKey: Readonly<Record<string, ExtensionUiSessionState>>;
 	runtimeOverlaysBySessionKey: Readonly<Record<string, SessionRuntimeOverlay>>;
 	activityBySessionKey: Readonly<Record<string, SessionActivitySnapshot>>;
+	slashCommandCatalogsBySessionKey: Readonly<Record<string, SlashCommandCatalogSnapshot>>;
+	sessionRenameRequestsBySessionKey: Readonly<Record<string, number>>;
+	commandPalette: CommandPaletteState;
+	resumePicker: ResumePickerState;
 	error: string | undefined;
 	pending: boolean;
 }
@@ -110,11 +122,16 @@ export interface GuiCatalogStore {
 	cancelRun(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	closeSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	createSession(workspaceId: WorkspaceId): Promise<void>;
+	closeCommandPalette(): void;
+	closeResumePicker(): void;
+	getSlashCommands(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	getSnapshot(): CatalogViewState;
 	getSettingsSummary(workspaceId: WorkspaceId): Promise<void>;
 	getTrustStatus(workspaceId: WorkspaceId): Promise<void>;
 	getTranscript(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	openSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
+	openCommandPalette(query?: string): void;
+	openResumePicker(workspaceId: WorkspaceId): Promise<void>;
 	openSettingsFile(workspaceId: WorkspaceId, scope: "global" | "project"): Promise<void>;
 	pickWorkspaceDirectory(): Promise<void>;
 	respondToExtensionUi(
@@ -130,7 +147,16 @@ export interface GuiCatalogStore {
 	): Promise<void>;
 	revealSettingsFile(workspaceId: WorkspaceId, scope: "global" | "project"): Promise<void>;
 	renameSession(workspaceId: WorkspaceId, sessionId: SessionId, title: string): Promise<void>;
+	requestSessionRename(workspaceId: WorkspaceId, sessionId: SessionId): void;
+	renameResumeSession(workspaceId: WorkspaceId, sessionId: SessionId, title: string): Promise<void>;
+	resumeArchiveSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
+	resumeOpenSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
+	resumeUnarchiveSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	restoreQueuedMessages(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
+	searchResume(
+		workspaceId: WorkspaceId,
+		patch?: Partial<Pick<ResumePickerState, "includeArchived" | "nameFilter" | "query" | "scope" | "sortMode">>,
+	): Promise<void>;
 	selectWorkspace(workspaceId: WorkspaceId): Promise<void>;
 	sendMessage(
 		workspaceId: WorkspaceId,
@@ -139,7 +165,11 @@ export interface GuiCatalogStore {
 		deliveryMode?: "steer" | "followUp",
 	): Promise<boolean>;
 	setComposerDraft(workspaceId: WorkspaceId, sessionId: SessionId, value: string): void;
+	setCommandPaletteQuery(query: string): void;
+	setCommandPaletteSelectedIndex(selectedIndex: number): void;
 	setModel(workspaceId: WorkspaceId, sessionId: SessionId, provider: string, modelId: string): Promise<void>;
+	setResumePickerShowPaths(showPaths: boolean): void;
+	setResumePickerSelectedIndex(selectedIndex: number): void;
 	setThinkingLevel(workspaceId: WorkspaceId, sessionId: SessionId, thinkingLevel: ThinkingLevel): Promise<void>;
 	subscribe(listener: () => void): () => void;
 	syncWorkspace(workspaceId: WorkspaceId): Promise<void>;
@@ -169,6 +199,10 @@ export function createGuiCatalogStore(
 		extensionUiBySessionKey: {},
 		runtimeOverlaysBySessionKey: {},
 		activityBySessionKey: {},
+		slashCommandCatalogsBySessionKey: {},
+		sessionRenameRequestsBySessionKey: {},
+		commandPalette: emptyCommandPaletteState(),
+		resumePicker: emptyResumePickerState(),
 		error: options.initialError,
 		pending: false,
 	};
@@ -188,6 +222,10 @@ export function createGuiCatalogStore(
 		emit();
 	}
 
+	function updateState(update: (current: CatalogViewState) => CatalogViewState): void {
+		setState(update(state));
+	}
+
 	async function invoke(command: GuiCommand): Promise<boolean> {
 		setState({ ...state, error: undefined, pending: true });
 		const result = await api.invoke(command);
@@ -202,6 +240,14 @@ export function createGuiCatalogStore(
 	async function invokeVoid(command: GuiCommand): Promise<void> {
 		await invoke(command);
 	}
+
+	const phase9Actions = createPhase9StoreActions({
+		api,
+		getState: () => state,
+		invoke,
+		nextRequestId,
+		updateState,
+	});
 
 	return {
 		archiveSession: (workspaceId, sessionId) =>
@@ -315,6 +361,7 @@ export function createGuiCatalogStore(
 			invokeVoid(new WorkspaceSync({ requestId: nextRequestId("workspace.sync"), workspaceId })),
 		unarchiveSession: (workspaceId, sessionId) =>
 			invokeVoid(new SessionUnarchive({ requestId: nextRequestId("session.unarchive"), workspaceId, sessionId })),
+		...phase9Actions,
 	};
 
 	async function updateExtensionEditorText(
@@ -414,6 +461,8 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 		const { [key]: _closedExtensionUi, ...extensionUiBySessionKey } = state.extensionUiBySessionKey;
 		const { [key]: _closedOverlay, ...runtimeOverlaysBySessionKey } = state.runtimeOverlaysBySessionKey;
 		const { [key]: _closedActivity, ...activityBySessionKey } = state.activityBySessionKey;
+		const { [key]: _closedSlashCommandCatalog, ...slashCommandCatalogsBySessionKey } =
+			state.slashCommandCatalogsBySessionKey;
 		if (!previous) {
 			return {
 				...state,
@@ -423,6 +472,7 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 				extensionUiBySessionKey,
 				runtimeOverlaysBySessionKey,
 				activityBySessionKey,
+				slashCommandCatalogsBySessionKey,
 			};
 		}
 		const sessions: SessionSnapshot[] = [];
@@ -437,6 +487,7 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 			extensionUiBySessionKey,
 			runtimeOverlaysBySessionKey,
 			activityBySessionKey,
+			slashCommandCatalogsBySessionKey,
 			sessionCatalogs: {
 				...state.sessionCatalogs,
 				[event.workspaceId]: {

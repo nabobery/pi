@@ -50,10 +50,30 @@ export class SettingsManager {
 }
 
 export const SessionManager = {
+	async list(): Promise<[]> {
+		return [];
+	},
+
 	open(): never {
 		throw new Error("Pi SDK SessionManager is unavailable in GUI E2E fake-runtime builds");
 	},
 };
+
+export function getDefaultSessionDir(cwd: string): string {
+	return join(cwd, ".pi", "sessions");
+}
+
+export function filterAndSortSessions<T>(sessions: T[]): T[] {
+	return sessions;
+}
+
+export const BUILTIN_SLASH_COMMANDS = [
+	{ name: "settings", description: "Open settings menu" },
+	{ name: "model", description: "Select model" },
+	{ name: "compact", description: "Manually compact the session context" },
+	{ name: "resume", description: "Resume a different session" },
+	{ name: "new", description: "Start a new session" },
+] as const;
 
 export function getProjectTrustOptions(): [] {
 	return [];

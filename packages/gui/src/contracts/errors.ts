@@ -194,6 +194,43 @@ export class SessionQueueRestoreFailed extends Schema.TaggedError<SessionQueueRe
 	},
 ) {}
 
+export class SlashCommandCatalogUnavailable extends Schema.TaggedError<SlashCommandCatalogUnavailable>()(
+	"SlashCommandCatalogUnavailable",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
+
+export class ResumeSearchFailed extends Schema.TaggedError<ResumeSearchFailed>()("ResumeSearchFailed", {
+	workspaceId: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class ResumeOpenFailed extends Schema.TaggedError<ResumeOpenFailed>()("ResumeOpenFailed", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class ResumeRenameFailed extends Schema.TaggedError<ResumeRenameFailed>()("ResumeRenameFailed", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class ResumeArchiveFailed extends Schema.TaggedError<ResumeArchiveFailed>()("ResumeArchiveFailed", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
 export class SessionRunNotActive extends Schema.TaggedError<SessionRunNotActive>()("SessionRunNotActive", {
 	workspaceId: Schema.String,
 	sessionId: Schema.String,
@@ -338,6 +375,11 @@ export const GuiError = Schema.Union(
 	SessionPromptFailed,
 	SessionCancelFailed,
 	SessionQueueRestoreFailed,
+	SlashCommandCatalogUnavailable,
+	ResumeSearchFailed,
+	ResumeOpenFailed,
+	ResumeRenameFailed,
+	ResumeArchiveFailed,
 	SessionRunNotActive,
 	SessionModelNotFound,
 	SessionModelAuthUnavailable,

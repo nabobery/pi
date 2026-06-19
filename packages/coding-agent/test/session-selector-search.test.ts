@@ -10,6 +10,7 @@ function makeSession(
 		id: overrides.id,
 		cwd: overrides.cwd ?? "",
 		name: overrides.name,
+		parentSessionPath: overrides.parentSessionPath,
 		created: overrides.created ?? new Date(0),
 		modified: overrides.modified,
 		messageCount: overrides.messageCount ?? 1,
@@ -123,6 +124,59 @@ describe("session selector search", () => {
 
 		const result = filterAndSortSessions(sessions, "re:(", "recent");
 		expect(result).toEqual([]);
+	});
+
+	it("returns empty list for unsafe regex", () => {
+		const sessions: SessionInfo[] = [
+			makeSession({
+				id: "a",
+				modified: new Date("2026-01-01T00:00:00.000Z"),
+				allMessagesText: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			}),
+		];
+
+		const result = filterAndSortSessions(sessions, "re:(a+)+$", "recent");
+		expect(result).toEqual([]);
+	});
+
+	it("uses TUI-style alphanumeric fuzzy matching", () => {
+		const sessions: SessionInfo[] = [
+			makeSession({
+				id: "swapped",
+				modified: new Date("2026-01-03T00:00:00.000Z"),
+				allMessagesText: "123abc",
+			}),
+			makeSession({
+				id: "other",
+				modified: new Date("2026-01-01T00:00:00.000Z"),
+				allMessagesText: "something else",
+			}),
+		];
+
+		const result = filterAndSortSessions(sessions, "abc123", "relevance");
+		expect(result.map((session) => session.id)).toEqual(["swapped"]);
+	});
+
+	it("orders threaded sessions as parent followed by descendants", () => {
+		const parent = makeSession({
+			id: "parent",
+			modified: new Date("2026-01-01T00:00:00.000Z"),
+			allMessagesText: "parent",
+		});
+		const child = makeSession({
+			id: "child",
+			modified: new Date("2026-01-03T00:00:00.000Z"),
+			allMessagesText: "child",
+			parentSessionPath: parent.path,
+		});
+		const sibling = makeSession({
+			id: "sibling",
+			modified: new Date("2026-01-02T00:00:00.000Z"),
+			allMessagesText: "sibling",
+		});
+
+		const result = filterAndSortSessions([child, sibling, parent], "", "threaded");
+		expect(result.map((session) => session.id)).toEqual(["parent", "child", "sibling"]);
 	});
 
 	describe("name filter", () => {

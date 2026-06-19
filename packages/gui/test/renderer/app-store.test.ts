@@ -13,6 +13,7 @@ import {
 	SessionClosed,
 	SessionCancelRun,
 	SessionActivityUpdated,
+	SessionGetSlashCommands,
 	SessionSelected,
 	SessionSendMessage,
 	SessionRestoreQueuedMessages,
@@ -28,6 +29,7 @@ import {
 	type GuiEvent,
 	InternalIpcError,
 	SessionCreate,
+	ResumeSearch,
 	WorkspaceCatalogUpdated,
 	catalogRevisionFromString,
 	eventIdFromString,
@@ -37,7 +39,11 @@ import {
 	sessionIdFromString,
 	workspaceIdFromString,
 } from "../../src/contracts/index.ts";
-import { createGuiCatalogStore, createValidatedRendererCatalogApi } from "../../src/renderer/app/app-store.ts";
+import {
+	createGuiCatalogStore,
+	createValidatedRendererCatalogApi,
+	type RendererCatalogApi,
+} from "../../src/renderer/app/app-store.ts";
 
 describe("createGuiCatalogStore", () => {
 	test("applies workspace and session catalog events", () => {
@@ -940,7 +946,213 @@ describe("createGuiCatalogStore", () => {
 
 		expect(listener).not.toHaveBeenCalled();
 	});
+
+	test("loads slash command catalogs into session-keyed state", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const invoke = vi.fn().mockResolvedValue({
+			ok: true,
+			requestId: requestIdFromString("request-1"),
+			data: {
+				workspaceId,
+				sessionId,
+				updatedAt: "2026-06-19T00:00:00.000Z",
+				commands: [
+					{
+						name: "resume",
+						description: "Resume a different session",
+						source: "builtin",
+						availability: "guiAction",
+					},
+				],
+			},
+		});
+		const store = createGuiCatalogStore(
+			{
+				invoke,
+				subscribe: () => () => undefined,
+			},
+			{ revision: catalogRevisionFromString("0"), workspaces: [] },
+		);
+
+		await store.getSlashCommands(workspaceId, sessionId);
+
+		expect(invoke.mock.calls[0]?.[0]).toBeInstanceOf(SessionGetSlashCommands);
+		expect(store.getSnapshot().slashCommandCatalogsBySessionKey["workspace-1:session-1"]).toMatchObject({
+			commands: [expect.objectContaining({ name: "resume", availability: "guiAction" })],
+		});
+	});
+
+	test("loads resume search results into picker state", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const invoke = vi.fn().mockResolvedValue({
+			ok: true,
+			requestId: requestIdFromString("request-1"),
+			data: {
+				workspaceId,
+				query: "hello",
+				scope: "currentWorkspace",
+				sortMode: "threaded",
+				nameFilter: "all",
+				includeArchived: false,
+				totalCount: 1,
+				filteredCount: 1,
+				searchedAt: "2026-06-19T00:00:00.000Z",
+				results: [
+					{
+						workspaceId,
+						workspaceName: "workspace",
+						sessionId,
+						title: "Session",
+						preview: "hello",
+						messageCount: 1,
+						updatedAt: "2026-06-19T00:00:00.000Z",
+						createdAt: "2026-06-19T00:00:00.000Z",
+						cwd: "/tmp/workspace",
+						sessionFilePath: "/tmp/session.jsonl",
+						isOpen: false,
+						isRunning: false,
+					},
+				],
+			},
+		});
+		const store = createGuiCatalogStore(
+			{
+				invoke,
+				subscribe: () => () => undefined,
+			},
+			{ revision: catalogRevisionFromString("0"), workspaces: [] },
+		);
+
+		await store.searchResume(workspaceId, { query: "hello" });
+
+		expect(invoke.mock.calls[0]?.[0]).toBeInstanceOf(ResumeSearch);
+		expect(store.getSnapshot().resumePicker).toMatchObject({
+			open: true,
+			loading: false,
+			result: {
+				filteredCount: 1,
+				results: [expect.objectContaining({ title: "Session" })],
+			},
+		});
+	});
+
+	test("ignores stale resume search results after a newer search completes", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const firstSearch = deferredInvokeResult();
+		const secondSearch = deferredInvokeResult();
+		const invoke = vi.fn().mockReturnValueOnce(firstSearch.promise).mockReturnValueOnce(secondSearch.promise);
+		const store = createGuiCatalogStore(
+			{
+				invoke,
+				subscribe: () => () => undefined,
+			},
+			{ revision: catalogRevisionFromString("0"), workspaces: [] },
+		);
+
+		const first = store.searchResume(workspaceId, { query: "old" });
+		const second = store.searchResume(workspaceId, { query: "new" });
+		secondSearch.resolve({
+			ok: true,
+			requestId: requestIdFromString("request-2"),
+			data: resumeSearchSnapshot(workspaceId, sessionId, "new", "New session"),
+		});
+		await second;
+		firstSearch.resolve({
+			ok: true,
+			requestId: requestIdFromString("request-1"),
+			data: resumeSearchSnapshot(workspaceId, sessionId, "old", "Old session"),
+		});
+		await first;
+
+		expect(store.getSnapshot().resumePicker.result).toMatchObject({
+			query: "new",
+			results: [expect.objectContaining({ title: "New session" })],
+		});
+	});
+
+	test("updates command palette and resume picker local UI state", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const invoke = vi.fn().mockResolvedValue({
+			ok: true,
+			requestId: requestIdFromString("request-1"),
+			data: {
+				workspaceId,
+				selectedSessionId: sessionId,
+				sessions: [sessionSnapshot(workspaceId, sessionId, "ready")],
+			},
+		});
+		const store = createGuiCatalogStore(
+			{
+				invoke,
+				subscribe: () => () => undefined,
+			},
+			{ revision: catalogRevisionFromString("0"), workspaces: [] },
+		);
+
+		store.openCommandPalette("/resume");
+		store.setCommandPaletteQuery("res");
+		store.setCommandPaletteSelectedIndex(2);
+		store.requestSessionRename(workspaceId, sessionId);
+		store.closeCommandPalette();
+		store.setResumePickerShowPaths(true);
+		store.setResumePickerSelectedIndex(3);
+		await store.resumeOpenSession(workspaceId, sessionId);
+		store.closeResumePicker();
+
+		expect(store.getSnapshot()).toMatchObject({
+			commandPalette: { open: false, query: "res", selectedIndex: 2 },
+			resumePicker: { open: false, showPaths: true, selectedIndex: 3 },
+			sessionRenameRequestsBySessionKey: { "workspace-1:session-1": 1 },
+		});
+	});
 });
+
+function deferredInvokeResult() {
+	let resolve!: (value: Awaited<ReturnType<RendererCatalogApi["invoke"]>>) => void;
+	const promise = new Promise<Awaited<ReturnType<RendererCatalogApi["invoke"]>>>((nextResolve) => {
+		resolve = nextResolve;
+	});
+	return { promise, resolve };
+}
+
+function resumeSearchSnapshot(
+	workspaceId: ReturnType<typeof workspaceIdFromString>,
+	sessionId: ReturnType<typeof sessionIdFromString>,
+	query: string,
+	title: string,
+) {
+	return {
+		workspaceId,
+		query,
+		scope: "currentWorkspace" as const,
+		sortMode: "threaded" as const,
+		nameFilter: "all" as const,
+		includeArchived: false,
+		totalCount: 1,
+		filteredCount: 1,
+		searchedAt: "2026-06-19T00:00:00.000Z",
+		results: [
+			{
+				workspaceId,
+				workspaceName: "workspace",
+				sessionId,
+				title,
+				preview: title,
+				messageCount: 1,
+				updatedAt: "2026-06-19T00:00:00.000Z",
+				createdAt: "2026-06-19T00:00:00.000Z",
+				cwd: "/tmp/workspace",
+				sessionFilePath: "/tmp/session.jsonl",
+				isOpen: false,
+				isRunning: false,
+			},
+		],
+	};
+}
 
 function sessionSnapshot(
 	workspaceId: ReturnType<typeof workspaceIdFromString>,

@@ -40,6 +40,7 @@ describe("catalog view", () => {
 				<SessionSection
 					activityBySessionKey={{}}
 					runtimeOverlaysBySessionKey={{}}
+					sessionRenameRequestsBySessionKey={{}}
 					store={storeStub()}
 					pending={false}
 					selectedWorkspace={undefined}
@@ -63,6 +64,7 @@ describe("catalog view", () => {
 				<SessionSection
 					activityBySessionKey={{}}
 					runtimeOverlaysBySessionKey={{}}
+					sessionRenameRequestsBySessionKey={{}}
 					store={storeStub()}
 					pending={false}
 					selectedWorkspace={workspace}
@@ -91,6 +93,7 @@ describe("catalog view", () => {
 			<SessionSection
 				activityBySessionKey={{}}
 				runtimeOverlaysBySessionKey={{}}
+				sessionRenameRequestsBySessionKey={{}}
 				store={storeStub()}
 				pending={false}
 				selectedWorkspace={workspace}
@@ -125,6 +128,7 @@ describe("catalog view", () => {
 					},
 				}}
 				runtimeOverlaysBySessionKey={{ "workspace-1:session-1": { status: "running", isOpen: true } }}
+				sessionRenameRequestsBySessionKey={{}}
 				store={store}
 				pending={false}
 				selectedWorkspace={workspace}
@@ -154,6 +158,7 @@ describe("catalog view", () => {
 			<SessionSection
 				activityBySessionKey={{}}
 				runtimeOverlaysBySessionKey={{}}
+				sessionRenameRequestsBySessionKey={{}}
 				store={storeStub()}
 				pending={false}
 				selectedWorkspace={workspace}
@@ -213,6 +218,7 @@ describe("catalog view", () => {
 				<SessionSection
 					activityBySessionKey={{}}
 					runtimeOverlaysBySessionKey={{}}
+					sessionRenameRequestsBySessionKey={{}}
 					store={store}
 					pending={false}
 					selectedWorkspace={workspace}
@@ -333,22 +339,37 @@ function storeStub(): GuiCatalogStore {
 		archiveSession: vi.fn().mockResolvedValue(undefined),
 		cancelRun: vi.fn().mockResolvedValue(undefined),
 		closeSession: vi.fn().mockResolvedValue(undefined),
+		closeCommandPalette: vi.fn(),
+		closeResumePicker: vi.fn(),
 		createSession: vi.fn().mockResolvedValue(undefined),
+		getSlashCommands: vi.fn().mockResolvedValue(undefined),
 		getSettingsSummary: vi.fn().mockResolvedValue(undefined),
 		getSnapshot: vi.fn(),
 		getTranscript: vi.fn().mockResolvedValue(undefined),
 		getTrustStatus: vi.fn().mockResolvedValue(undefined),
+		openCommandPalette: vi.fn(),
+		openResumePicker: vi.fn().mockResolvedValue(undefined),
 		openSession: vi.fn().mockResolvedValue(undefined),
 		openSettingsFile: vi.fn().mockResolvedValue(undefined),
 		pickWorkspaceDirectory: vi.fn().mockResolvedValue(undefined),
 		renameSession: vi.fn().mockResolvedValue(undefined),
+		renameResumeSession: vi.fn().mockResolvedValue(undefined),
+		requestSessionRename: vi.fn(),
 		respondToExtensionUi: vi.fn().mockResolvedValue(undefined),
 		revealSettingsFile: vi.fn().mockResolvedValue(undefined),
+		resumeArchiveSession: vi.fn().mockResolvedValue(undefined),
+		resumeOpenSession: vi.fn().mockResolvedValue(undefined),
+		resumeUnarchiveSession: vi.fn().mockResolvedValue(undefined),
 		restoreQueuedMessages: vi.fn().mockResolvedValue(undefined),
+		searchResume: vi.fn().mockResolvedValue(undefined),
 		selectWorkspace: vi.fn().mockResolvedValue(undefined),
 		sendMessage: vi.fn().mockResolvedValue(true),
 		setComposerDraft: vi.fn(),
+		setCommandPaletteQuery: vi.fn(),
+		setCommandPaletteSelectedIndex: vi.fn(),
 		setModel: vi.fn().mockResolvedValue(undefined),
+		setResumePickerSelectedIndex: vi.fn(),
+		setResumePickerShowPaths: vi.fn(),
 		setThinkingLevel: vi.fn().mockResolvedValue(undefined),
 		subscribe: vi.fn(() => () => undefined),
 		syncWorkspace: vi.fn().mockResolvedValue(undefined),

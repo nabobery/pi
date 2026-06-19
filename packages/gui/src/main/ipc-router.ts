@@ -12,6 +12,11 @@ import {
 	InvalidRendererCommand,
 	InternalIpcError,
 	ReceiptEmitted,
+	ResumeArchive,
+	ResumeOpen,
+	ResumeRename,
+	ResumeSearch,
+	ResumeUnarchive,
 	SettingsGetSummary,
 	SettingsOpenGlobalFile,
 	SettingsOpenProjectFile,
@@ -24,6 +29,7 @@ import {
 	SessionCatalogUpdated,
 	SessionCreate,
 	SessionGetTranscript,
+	SessionGetSlashCommands,
 	SessionOpen,
 	SessionRename,
 	SessionRestoreQueuedMessages,
@@ -56,9 +62,11 @@ import { SettingsBridgeService } from "./settings/settings-bridge-service.ts";
 import { ExtensionHostUiService } from "./session/extension-host-ui-service.ts";
 import { FakeSessionDriver, shouldUseFakeSessionDriver } from "./session/fake-session-driver.ts";
 import { PiSdkSessionDriver } from "./session/pi-sdk-session-driver.ts";
+import { ResumeService } from "./session/resume-service.ts";
 import { RuntimeSupervisor } from "./session/runtime-supervisor.ts";
 import type { SessionDriver } from "./session/session-driver.ts";
 import { SessionSupervisor } from "./session/session-supervisor.ts";
+import { SlashCommandService } from "./session/slash-command-service.ts";
 
 export interface GuiIpcInvokeEvent {
 	senderFrame: { url: string } | null;
@@ -76,6 +84,7 @@ export interface CreateGuiInvokeHandlerOptions {
 		SettingsBridgeService,
 		"getSummary" | "getTrustStatus" | "openSettingsFile" | "revealSettingsFile"
 	>;
+	resumeService?: Pick<ResumeService, "archive" | "open" | "rename" | "search" | "unarchive">;
 	sessionSupervisor?: Pick<
 		SessionSupervisor,
 		| "cancelRun"
@@ -91,6 +100,7 @@ export interface CreateGuiInvokeHandlerOptions {
 		| "setThinkingLevel"
 		| "updateExtensionEditorText"
 	>;
+	slashCommandService?: Pick<SlashCommandService, "getCatalog">;
 }
 
 type RendererEventSender = Pick<WebContents, "id" | "isDestroyed" | "once" | "send">;
@@ -168,6 +178,8 @@ export function registerGuiIpcHandlers(app: App, mode: string | undefined, polic
 		eventBus,
 		extensionHostUiService,
 	});
+	const resumeService = new ResumeService({ catalogService, sessionSupervisor });
+	const slashCommandService = new SlashCommandService({ sessionSupervisor });
 	const handler = createGuiInvokeHandler({
 		app,
 		catalogService,
@@ -178,7 +190,9 @@ export function registerGuiIpcHandlers(app: App, mode: string | undefined, polic
 			return result.canceled ? undefined : result.filePaths[0];
 		},
 		policy,
+		resumeService,
 		settingsBridgeService,
+		slashCommandService,
 		sessionSupervisor,
 	});
 
@@ -299,6 +313,55 @@ async function handleGuiCommand(
 			const timeline = await options.sessionSupervisor.getTranscript(command.workspaceId, command.sessionId);
 			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
 			return { ok: true, requestId: command.requestId, data: timeline };
+		}
+
+		if (command instanceof SessionGetSlashCommands && options.slashCommandService) {
+			const catalog = await options.slashCommandService.getCatalog(command.workspaceId, command.sessionId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: catalog };
+		}
+
+		if (command instanceof ResumeSearch && options.resumeService) {
+			const snapshot = await options.resumeService.search({
+				workspaceId: command.workspaceId,
+				query: command.query,
+				scope: command.scope,
+				sortMode: command.sortMode,
+				nameFilter: command.nameFilter,
+				includeArchived: command.includeArchived,
+			});
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: snapshot };
+		}
+
+		if (command instanceof ResumeOpen && options.resumeService) {
+			const sessions = await options.resumeService.open(command.workspaceId, command.sessionId);
+			publishSessionCatalog(options.eventBus, sessions);
+			publishSelectedSession(options.eventBus, sessions);
+			await publishWorkspaceRuntimeContext(options.eventBus, settingsBridgeService, command.workspaceId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: sessions };
+		}
+
+		if (command instanceof ResumeRename && options.resumeService) {
+			const sessions = await options.resumeService.rename(command.workspaceId, command.sessionId, command.title);
+			publishSessionCatalog(options.eventBus, sessions);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: sessions };
+		}
+
+		if (command instanceof ResumeArchive && options.resumeService) {
+			const sessions = await options.resumeService.archive(command.workspaceId, command.sessionId);
+			publishSessionCatalog(options.eventBus, sessions);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: sessions };
+		}
+
+		if (command instanceof ResumeUnarchive && options.resumeService) {
+			const sessions = await options.resumeService.unarchive(command.workspaceId, command.sessionId);
+			publishSessionCatalog(options.eventBus, sessions);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: sessions };
 		}
 
 		if (command instanceof SessionSendMessage && options.sessionSupervisor) {

@@ -24,12 +24,28 @@ export {
 } from "./core/auth-storage.ts";
 export type { ExtensionUIContext, ExtensionUIDialogOptions, WorkingIndicatorOptions } from "./core/extensions/index.ts";
 export { ModelRegistry } from "./core/model-registry.ts";
-export { type SessionEntry, SessionManager } from "./core/session-manager.ts";
+export { getDefaultSessionDir, type SessionEntry, type SessionInfo, SessionManager } from "./core/session-manager.ts";
+export {
+	filterAndSortSessions,
+	hasSessionName,
+	type MatchResult,
+	matchSession,
+	type NameFilter,
+	type ParsedSearchQuery,
+	parseSearchQuery,
+	type SortMode,
+} from "./core/session-search.ts";
 export {
 	type DefaultProjectTrust,
 	type Settings,
 	SettingsManager,
 } from "./core/settings-manager.ts";
+export {
+	BUILTIN_SLASH_COMMANDS,
+	type BuiltinSlashCommand,
+	type SlashCommandInfo,
+	type SlashCommandSource,
+} from "./core/slash-commands.ts";
 export {
 	getProjectTrustOptions,
 	hasTrustRequiringProjectResources,

@@ -160,6 +160,84 @@ export const SessionActivitySnapshot = Schema.Struct({
 });
 export type SessionActivitySnapshot = Schema.Schema.Type<typeof SessionActivitySnapshot>;
 
+export const SlashCommandSourceSnapshot = Schema.Literal("builtin", "extension", "prompt", "skill");
+export type SlashCommandSourceSnapshot = Schema.Schema.Type<typeof SlashCommandSourceSnapshot>;
+
+export const SlashCommandAvailability = Schema.Literal("guiAction", "insertOnly", "sendable", "deferred", "conflict");
+export type SlashCommandAvailability = Schema.Schema.Type<typeof SlashCommandAvailability>;
+
+export const SlashCommandSourceInfoSnapshot = Schema.Struct({
+	path: Schema.String,
+	source: Schema.String,
+	scope: Schema.Literal("user", "project", "temporary"),
+	origin: Schema.Literal("package", "top-level"),
+	baseDir: Schema.optional(Schema.String),
+});
+export type SlashCommandSourceInfoSnapshot = Schema.Schema.Type<typeof SlashCommandSourceInfoSnapshot>;
+
+export const SlashCommandSnapshot = Schema.Struct({
+	name: Schema.String,
+	description: Schema.optional(Schema.String),
+	source: SlashCommandSourceSnapshot,
+	sourceInfo: Schema.optional(SlashCommandSourceInfoSnapshot),
+	availability: SlashCommandAvailability,
+	disabledReason: Schema.optional(Schema.String),
+});
+export type SlashCommandSnapshot = Schema.Schema.Type<typeof SlashCommandSnapshot>;
+
+export const SlashCommandCatalogSnapshot = Schema.Struct({
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	commands: Schema.Array(SlashCommandSnapshot),
+	updatedAt: Schema.String,
+});
+export type SlashCommandCatalogSnapshot = Schema.Schema.Type<typeof SlashCommandCatalogSnapshot>;
+export const decodeSlashCommandCatalogSnapshot = (value: unknown): Promise<SlashCommandCatalogSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(SlashCommandCatalogSnapshot)(value));
+
+export const ResumeScope = Schema.Literal("currentWorkspace", "knownWorkspaces");
+export type ResumeScope = Schema.Schema.Type<typeof ResumeScope>;
+
+export const ResumeSortMode = Schema.Literal("threaded", "recent", "relevance");
+export type ResumeSortMode = Schema.Schema.Type<typeof ResumeSortMode>;
+
+export const ResumeNameFilter = Schema.Literal("all", "named");
+export type ResumeNameFilter = Schema.Schema.Type<typeof ResumeNameFilter>;
+
+export const ResumeSessionSnapshot = Schema.Struct({
+	workspaceId: WorkspaceId,
+	workspaceName: Schema.String,
+	sessionId: SessionId,
+	title: Schema.String,
+	preview: Schema.String,
+	messageCount: Schema.Number,
+	updatedAt: Schema.String,
+	createdAt: Schema.String,
+	cwd: Schema.String,
+	sessionFilePath: Schema.String,
+	parentSessionId: Schema.optional(SessionId),
+	archivedAt: Schema.optional(Schema.String),
+	isOpen: Schema.Boolean,
+	isRunning: Schema.Boolean,
+});
+export type ResumeSessionSnapshot = Schema.Schema.Type<typeof ResumeSessionSnapshot>;
+
+export const ResumeSearchSnapshot = Schema.Struct({
+	workspaceId: WorkspaceId,
+	query: Schema.String,
+	scope: ResumeScope,
+	sortMode: ResumeSortMode,
+	nameFilter: ResumeNameFilter,
+	includeArchived: Schema.Boolean,
+	results: Schema.Array(ResumeSessionSnapshot),
+	totalCount: Schema.Number,
+	filteredCount: Schema.Number,
+	searchedAt: Schema.String,
+});
+export type ResumeSearchSnapshot = Schema.Schema.Type<typeof ResumeSearchSnapshot>;
+export const decodeResumeSearchSnapshot = (value: unknown): Promise<ResumeSearchSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(ResumeSearchSnapshot)(value));
+
 export const TrustStatusSnapshot = Schema.Struct({
 	workspaceId: WorkspaceId,
 	cwd: Schema.String,

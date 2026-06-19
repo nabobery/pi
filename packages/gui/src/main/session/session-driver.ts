@@ -4,6 +4,7 @@ import type {
 	QueueRestoreSnapshot,
 	QueueSnapshot,
 	SessionId,
+	SlashCommandSnapshot,
 	ThinkingLevel,
 	TimelineSnapshot,
 	WorkspaceId,
@@ -48,6 +49,7 @@ export interface SessionDriver {
 	closeSession(handle: RuntimeSessionHandle): Promise<void>;
 	getModelThinking(handle: RuntimeSessionHandle): Promise<ModelThinkingSnapshot>;
 	getQueue(handle: RuntimeSessionHandle): Promise<QueueSnapshot>;
+	getSlashCommands?(handle: RuntimeSessionHandle): Promise<SlashCommandSnapshot[]>;
 	getTranscript(handle: RuntimeSessionHandle): Promise<TimelineSnapshot>;
 	restoreQueuedMessages(handle: RuntimeSessionHandle): Promise<QueueRestoreSnapshot>;
 	setModel(handle: RuntimeSessionHandle, provider: string, modelId: string): Promise<ModelThinkingSnapshot>;

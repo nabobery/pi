@@ -15,6 +15,7 @@ import {
 } from "./app-panels.tsx";
 import { loadBootstrapState, type LoadState } from "./bootstrap-loader.ts";
 import { MainPane, SessionSection, WorkspaceSection } from "./catalog-view.tsx";
+import { CommandPalette, ResumePicker } from "./command-palette.tsx";
 
 export function App() {
 	const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
@@ -82,6 +83,19 @@ export function ReadyApp({
 	const extensionUi = selectedKey ? state.extensionUiBySessionKey[selectedKey] : undefined;
 	const settingsSummary = selectedWorkspace ? state.settingsSummaryByWorkspaceId[selectedWorkspace.id] : undefined;
 	const trustStatus = selectedWorkspace ? state.trustStatusByWorkspaceId[selectedWorkspace.id] : undefined;
+
+	useEffect(() => {
+		function handleKeyDown(event: KeyboardEvent): void {
+			if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
+			event.preventDefault();
+			store.openCommandPalette();
+		}
+		document.addEventListener("keydown", handleKeyDown);
+		return () => {
+			document.removeEventListener("keydown", handleKeyDown);
+		};
+	}, [store]);
+
 	useEffect(() => {
 		if (!selectedWorkspace || !selectedSession) return;
 		if (selectedSession.status !== "ready") return;
@@ -98,6 +112,9 @@ export function ReadyApp({
 	function updateDraft(value: string): void {
 		if (!selectedWorkspace || !selectedSession) return;
 		store.setComposerDraft(selectedWorkspace.id, selectedSession.id, value);
+		if (value === "/" || (value.startsWith("/") && !state.commandPalette.open)) {
+			store.openCommandPalette(value);
+		}
 	}
 
 	async function sendDraft(deliveryMode?: "steer" | "followUp"): Promise<void> {
@@ -123,6 +140,7 @@ export function ReadyApp({
 				<SessionSection
 					activityBySessionKey={state.activityBySessionKey}
 					runtimeOverlaysBySessionKey={state.runtimeOverlaysBySessionKey}
+					sessionRenameRequestsBySessionKey={state.sessionRenameRequestsBySessionKey}
 					store={store}
 					pending={state.pending}
 					selectedWorkspace={selectedWorkspace}
@@ -148,6 +166,7 @@ export function ReadyApp({
 				</header>
 				{selectedWorkspace && selectedSession ? (
 					<RuntimeControls
+						id="runtime-controls"
 						modelThinking={modelThinking}
 						onSetModel={(provider, modelId) =>
 							void store.setModel(selectedWorkspace.id, selectedSession.id, provider, modelId)
@@ -177,6 +196,13 @@ export function ReadyApp({
 					onSend={(deliveryMode) => void sendDraft(deliveryMode)}
 					selectedSession={selectedSession}
 				/>
+				<CommandPalette
+					selectedSessionId={selectedSession?.id}
+					selectedWorkspaceId={selectedWorkspace?.id}
+					state={state}
+					store={store}
+				/>
+				<ResumePicker selectedWorkspaceId={selectedWorkspace?.id} state={state} store={store} />
 				{selectedWorkspace && selectedSession && extensionUi ? (
 					<ExtensionUiLayer
 						draft={draft}

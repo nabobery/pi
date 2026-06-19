@@ -11,6 +11,7 @@ import {
 	type Model,
 	type PromptOptions,
 	type SessionManager,
+	type SlashCommandInfo,
 } from "@earendil-works/pi-coding-agent/runtime";
 import {
 	SessionRuntimeBindFailed,
@@ -35,6 +36,7 @@ export interface RuntimeAgentSession {
 	clearQueue(): { steering: string[]; followUp: string[] };
 	followUpMode: "all" | "one-at-a-time";
 	getAvailableThinkingLevels(): ThinkingLevel[];
+	getCommands?(): SlashCommandInfo[];
 	getFollowUpMessages(): readonly string[];
 	getSteeringMessages(): readonly string[];
 	model?: RuntimeModel;

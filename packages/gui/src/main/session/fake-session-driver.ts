@@ -3,6 +3,7 @@ import {
 	type QueueRestoreSnapshot,
 	type QueueSnapshot,
 	type SessionId,
+	type SlashCommandSnapshot,
 	type TimelineSnapshot,
 	sessionIdFromString,
 } from "../../contracts/index.ts";
@@ -133,6 +134,32 @@ export class FakeSessionDriver implements SessionDriver {
 	async getQueue(handle: RuntimeSessionHandle): Promise<QueueSnapshot> {
 		const state = this.requireState(handle);
 		return queueSnapshot(handle, state);
+	}
+
+	async getSlashCommands(): Promise<SlashCommandSnapshot[]> {
+		return [
+			{
+				name: "fake-extension",
+				description: "Run fake extension command",
+				source: "extension",
+				sourceInfo: fakeSourceInfo("fake-extension.ts"),
+				availability: "sendable",
+			},
+			{
+				name: "fake-prompt",
+				description: "Insert fake prompt template",
+				source: "prompt",
+				sourceInfo: fakeSourceInfo("fake-prompt.md"),
+				availability: "insertOnly",
+			},
+			{
+				name: "skill:fake-skill",
+				description: "Use fake skill",
+				source: "skill",
+				sourceInfo: fakeSourceInfo("fake-skill/SKILL.md"),
+				availability: "sendable",
+			},
+		];
 	}
 
 	async restoreQueuedMessages(handle: RuntimeSessionHandle): Promise<QueueRestoreSnapshot> {
@@ -305,6 +332,26 @@ function createFakeRuntime(state: FakeRuntimeState): ManagedAgentRuntime {
 		},
 		followUpMode: "all",
 		getAvailableThinkingLevels: () => ["off"],
+		getCommands: () => [
+			{
+				name: "fake-extension",
+				description: "Run fake extension command",
+				source: "extension",
+				sourceInfo: fakeSourceInfo("fake-extension.ts"),
+			},
+			{
+				name: "fake-prompt",
+				description: "Insert fake prompt template",
+				source: "prompt",
+				sourceInfo: fakeSourceInfo("fake-prompt.md"),
+			},
+			{
+				name: "skill:fake-skill",
+				description: "Use fake skill",
+				source: "skill",
+				sourceInfo: fakeSourceInfo("fake-skill/SKILL.md"),
+			},
+		],
 		getFollowUpMessages: () => state.followUpQueue,
 		getSteeringMessages: () => state.steeringQueue,
 		prompt: async () => undefined,
@@ -323,6 +370,15 @@ function createFakeRuntime(state: FakeRuntimeState): ManagedAgentRuntime {
 	return {
 		session,
 		dispose: async () => undefined,
+	};
+}
+
+function fakeSourceInfo(path: string) {
+	return {
+		path,
+		source: "fake",
+		scope: "temporary" as const,
+		origin: "top-level" as const,
 	};
 }
 

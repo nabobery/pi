@@ -32,6 +32,7 @@ import {
 	type SessionCatalogSnapshot,
 	type SessionId,
 	type SessionSnapshot,
+	type SlashCommandSnapshot,
 	type TimelineSnapshot,
 	type ThinkingLevel,
 	type WorkspaceCatalogSnapshot,
@@ -227,6 +228,12 @@ export class SessionSupervisor {
 			});
 		}
 		return this.driver.getTranscript(record.handle);
+	}
+
+	async getSlashCommands(workspaceId: WorkspaceId, sessionId: SessionId): Promise<SlashCommandSnapshot[]> {
+		const getSlashCommands = this.driver.getSlashCommands;
+		if (!getSlashCommands) return [];
+		return getSlashCommands(this.getRecord(workspaceId, sessionId).handle);
 	}
 
 	async restoreQueuedMessages(workspaceId: WorkspaceId, sessionId: SessionId): Promise<QueueRestoreSnapshot> {

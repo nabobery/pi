@@ -12,10 +12,12 @@ import type { CatalogViewState, GuiCatalogStore } from "./app-store.ts";
 type CatalogState = CatalogViewState;
 
 export function RuntimeControls({
+	id,
 	modelThinking,
 	onSetModel,
 	onSetThinkingLevel,
 }: {
+	id?: string;
 	modelThinking: ModelThinkingSnapshot | undefined;
 	onSetModel(provider: string, modelId: string): void;
 	onSetThinkingLevel(level: ModelThinkingSnapshot["thinkingLevel"]): void;
@@ -27,7 +29,7 @@ export function RuntimeControls({
 		: -1;
 
 	return (
-		<div className="runtime-controls" aria-label="Runtime controls">
+		<div id={id} className="runtime-controls" aria-label="Runtime controls" tabIndex={-1}>
 			<label>
 				<span>Model</span>
 				<select
@@ -193,7 +195,7 @@ export function SettingsTrustPanel({
 }) {
 	if (!selectedWorkspaceId) return null;
 	return (
-		<div className="sidebar-section">
+		<div id="settings-trust-panel" className="sidebar-section" tabIndex={-1}>
 			<p className="section-label">Settings</p>
 			<dl className="summary-list">
 				<div>

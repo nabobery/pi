@@ -17,6 +17,7 @@ import {
 	type ModelThinkingSnapshot,
 	type QueueSnapshot,
 	type SessionId,
+	type SlashCommandSnapshot,
 	type ThinkingLevel,
 	type TimelineSnapshot,
 	type WorkspaceId,
@@ -175,6 +176,20 @@ export class PiSdkSessionDriver implements SessionDriver {
 				followUpMode: handle.runtime.session.followUpMode,
 			},
 		);
+	}
+
+	async getSlashCommands(handle: RuntimeSessionHandle): Promise<SlashCommandSnapshot[]> {
+		const commands: SlashCommandSnapshot[] = [];
+		for (const command of handle.runtime.session.getCommands?.() ?? []) {
+			commands.push({
+				name: command.name,
+				...(command.description ? { description: command.description } : {}),
+				source: command.source,
+				sourceInfo: command.sourceInfo,
+				availability: command.source === "prompt" ? "insertOnly" : "sendable",
+			});
+		}
+		return commands;
 	}
 
 	async restoreQueuedMessages(handle: RuntimeSessionHandle) {

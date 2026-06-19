@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import type {
 	SessionCatalogSnapshot,
@@ -48,6 +48,7 @@ export function WorkspaceSection({
 export function SessionSection({
 	activityBySessionKey,
 	runtimeOverlaysBySessionKey,
+	sessionRenameRequestsBySessionKey,
 	store,
 	pending,
 	selectedWorkspace,
@@ -55,6 +56,7 @@ export function SessionSection({
 }: {
 	activityBySessionKey: CatalogViewState["activityBySessionKey"];
 	runtimeOverlaysBySessionKey: CatalogViewState["runtimeOverlaysBySessionKey"];
+	sessionRenameRequestsBySessionKey: CatalogViewState["sessionRenameRequestsBySessionKey"];
 	store: GuiCatalogStore;
 	pending: boolean;
 	selectedWorkspace: WorkspaceSnapshot | undefined;
@@ -105,6 +107,7 @@ export function SessionSection({
 				store={store}
 				activityBySessionKey={activityBySessionKey}
 				runtimeOverlaysBySessionKey={runtimeOverlaysBySessionKey}
+				sessionRenameRequestsBySessionKey={sessionRenameRequestsBySessionKey}
 				sessions={activeSessions}
 				selectedSessionId={sessionCatalog?.selectedSessionId}
 				isArchived={false}
@@ -116,6 +119,7 @@ export function SessionSection({
 						store={store}
 						activityBySessionKey={activityBySessionKey}
 						runtimeOverlaysBySessionKey={runtimeOverlaysBySessionKey}
+						sessionRenameRequestsBySessionKey={sessionRenameRequestsBySessionKey}
 						sessions={archivedSessions}
 						selectedSessionId={sessionCatalog?.selectedSessionId}
 						isArchived
@@ -186,6 +190,7 @@ export function MainPane({
 function SessionList({
 	activityBySessionKey,
 	runtimeOverlaysBySessionKey,
+	sessionRenameRequestsBySessionKey,
 	store,
 	sessions,
 	selectedSessionId,
@@ -193,6 +198,7 @@ function SessionList({
 }: {
 	activityBySessionKey: CatalogViewState["activityBySessionKey"];
 	runtimeOverlaysBySessionKey: CatalogViewState["runtimeOverlaysBySessionKey"];
+	sessionRenameRequestsBySessionKey: CatalogViewState["sessionRenameRequestsBySessionKey"];
 	store: GuiCatalogStore;
 	sessions: readonly SessionSnapshot[];
 	selectedSessionId: string | undefined;
@@ -205,6 +211,14 @@ function SessionList({
 		setEditingSessionId(session.id);
 		setDraftTitle(session.title);
 	}
+
+	useEffect(() => {
+		const session = sessions.find((candidate) => {
+			if (!selectedSessionId || candidate.id !== selectedSessionId) return false;
+			return (sessionRenameRequestsBySessionKey[`${candidate.workspaceId}:${candidate.id}`] ?? 0) > 0;
+		});
+		if (session) startRename(session);
+	}, [selectedSessionId, sessionRenameRequestsBySessionKey, sessions]);
 
 	function cancelRename(): void {
 		setEditingSessionId(undefined);

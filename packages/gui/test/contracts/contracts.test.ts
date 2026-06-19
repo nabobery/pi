@@ -10,6 +10,11 @@ import {
 	GuiError,
 	GuiEvent,
 	ReceiptEmitted,
+	ResumeArchive,
+	ResumeOpen,
+	ResumeRename,
+	ResumeSearch,
+	ResumeUnarchive,
 	RunCancelled,
 	RunCompleted,
 	SessionCancelFailed,
@@ -18,6 +23,7 @@ import {
 	SessionClose,
 	SessionClosed,
 	SessionGetTranscript,
+	SessionGetSlashCommands,
 	SessionPromptFailed,
 	SessionPromptRejected,
 	SessionRuntimeNotFound,
@@ -33,6 +39,8 @@ import {
 	decodeGuiCommand,
 	decodeGuiError,
 	decodeGuiEvent,
+	decodeResumeSearchSnapshot,
+	decodeSlashCommandCatalogSnapshot,
 	decodeTimelineSnapshot,
 	eventIdFromString,
 	requestIdFromString,
@@ -95,6 +103,55 @@ describe("gui contracts", () => {
 			),
 		).resolves.toBeInstanceOf(SessionGetTranscript);
 		await expect(decodeGuiCommand({ _tag: "session.close", requestId: "request-8", sessionId })).rejects.toThrow();
+	});
+
+	test("decodes slash command and resume commands", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+
+		await expect(
+			decodeGuiCommand(
+				new SessionGetSlashCommands({ requestId: requestIdFromString("request-slash"), workspaceId, sessionId }),
+			),
+		).resolves.toBeInstanceOf(SessionGetSlashCommands);
+		await expect(
+			decodeGuiCommand(
+				new ResumeSearch({
+					requestId: requestIdFromString("request-resume-search"),
+					workspaceId,
+					query: "hello",
+					scope: "currentWorkspace",
+					sortMode: "threaded",
+					nameFilter: "all",
+					includeArchived: false,
+				}),
+			),
+		).resolves.toBeInstanceOf(ResumeSearch);
+		await expect(
+			decodeGuiCommand(
+				new ResumeOpen({ requestId: requestIdFromString("request-resume-open"), workspaceId, sessionId }),
+			),
+		).resolves.toBeInstanceOf(ResumeOpen);
+		await expect(
+			decodeGuiCommand(
+				new ResumeRename({
+					requestId: requestIdFromString("request-resume-rename"),
+					workspaceId,
+					sessionId,
+					title: "Renamed",
+				}),
+			),
+		).resolves.toBeInstanceOf(ResumeRename);
+		await expect(
+			decodeGuiCommand(
+				new ResumeArchive({ requestId: requestIdFromString("request-resume-archive"), workspaceId, sessionId }),
+			),
+		).resolves.toBeInstanceOf(ResumeArchive);
+		await expect(
+			decodeGuiCommand(
+				new ResumeUnarchive({ requestId: requestIdFromString("request-resume-unarchive"), workspaceId, sessionId }),
+			),
+		).resolves.toBeInstanceOf(ResumeUnarchive);
 	});
 
 	test("decodes prompt commands with explicit running delivery modes", async () => {
@@ -376,6 +433,54 @@ describe("gui contracts", () => {
 				entries: [],
 			}),
 		).rejects.toThrow();
+	});
+
+	test("decodes slash command and resume snapshots", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const slashCatalog = await decodeSlashCommandCatalogSnapshot({
+			workspaceId,
+			sessionId,
+			updatedAt: "2026-06-19T00:00:00.000Z",
+			commands: [
+				{
+					name: "resume",
+					description: "Resume a different session",
+					source: "builtin",
+					availability: "guiAction",
+				},
+			],
+		});
+		const resumeSearch = await decodeResumeSearchSnapshot({
+			workspaceId,
+			query: "hello",
+			scope: "currentWorkspace",
+			sortMode: "threaded",
+			nameFilter: "all",
+			includeArchived: false,
+			totalCount: 1,
+			filteredCount: 1,
+			searchedAt: "2026-06-19T00:00:00.000Z",
+			results: [
+				{
+					workspaceId,
+					workspaceName: "workspace",
+					sessionId,
+					title: "Session",
+					preview: "hello",
+					messageCount: 1,
+					updatedAt: "2026-06-19T00:00:00.000Z",
+					createdAt: "2026-06-19T00:00:00.000Z",
+					cwd: "/tmp/workspace",
+					sessionFilePath: "/tmp/session.jsonl",
+					isOpen: true,
+					isRunning: false,
+				},
+			],
+		});
+
+		expect(slashCatalog.commands[0]).toMatchObject({ name: "resume", availability: "guiAction" });
+		expect(resumeSearch.results[0]).toMatchObject({ title: "Session", isOpen: true });
 	});
 
 	test("decodes bootstrap snapshots with warnings", () => {
