@@ -53,8 +53,10 @@ import { isAllowedAppUrl } from "./app-origin-policy.ts";
 import { CatalogService } from "./catalog/catalog-service.ts";
 import { SettingsBridgeService } from "./settings/settings-bridge-service.ts";
 import { ExtensionHostUiService } from "./session/extension-host-ui-service.ts";
+import { FakeSessionDriver, shouldUseFakeSessionDriver } from "./session/fake-session-driver.ts";
 import { PiSdkSessionDriver } from "./session/pi-sdk-session-driver.ts";
 import { RuntimeSupervisor } from "./session/runtime-supervisor.ts";
+import type { SessionDriver } from "./session/session-driver.ts";
 import { SessionSupervisor } from "./session/session-supervisor.ts";
 
 export interface GuiIpcInvokeEvent {
@@ -155,9 +157,12 @@ export function registerGuiIpcHandlers(app: App, mode: string | undefined, polic
 			extensionHostUiService.createContext(workspaceId, sessionId),
 	});
 	const settingsBridgeService = new SettingsBridgeService({ catalogService, shell });
+	const driver: SessionDriver = shouldUseFakeSessionDriver()
+		? new FakeSessionDriver({ extensionHostUiService })
+		: new PiSdkSessionDriver({ runtimeSupervisor });
 	const sessionSupervisor = new SessionSupervisor({
 		catalogService,
-		driver: new PiSdkSessionDriver({ runtimeSupervisor }),
+		driver,
 		eventBus,
 		extensionHostUiService,
 	});
@@ -205,7 +210,7 @@ async function handleGuiCommand(
 		const data = {
 			appInfo: createAppInfo(options.app, options.mode),
 			workspaceCatalog,
-			...(startupWarning ? { warnings: [startupWarning] } : {}),
+			...(startupWarning ? { warnings: [serializeGuiError(startupWarning)] } : {}),
 		};
 		options.eventBus.publishReceipt(command.requestId, "app.bootstrap.completed");
 		return { ok: true, requestId: command.requestId, data };
@@ -438,7 +443,15 @@ function validateSender(policy: AppOriginPolicy, event: GuiIpcInvokeEvent): Unau
 }
 
 function failureResult(requestId: string, error: GuiError): GuiCommandResult {
-	return { ok: false, requestId: requestIdFromString(requestId), error };
+	return { ok: false, requestId: requestIdFromString(requestId), error: serializeGuiError(error) };
+}
+
+function serializeGuiError(error: GuiError): GuiError {
+	return {
+		...error,
+		message: error.message,
+		...(typeof error.cause === "string" ? { cause: error.cause } : {}),
+	};
 }
 
 function getRequestId(payload: unknown): string {

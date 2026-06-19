@@ -12,7 +12,7 @@ export default defineConfig({
 		},
 	},
 	test: {
-		include: ["test/**/*.test.ts"],
+		include: ["test/**/*.test.ts", "test/**/*.test.tsx"],
 		environment: "node",
 		watch: false,
 		clearMocks: true,
@@ -21,7 +21,13 @@ export default defineConfig({
 			provider: "v8",
 			reporter: ["text", "lcov"],
 			include: ["src/**/*.ts", "src/**/*.tsx"],
-			exclude: ["src/**/*.d.ts"],
+			exclude: [
+				"src/**/*.d.ts",
+				// Entrypoint wrappers are covered through Electron E2E and lower-level module tests.
+				"src/main/main.ts",
+				"src/preload/index.ts",
+				"src/renderer/main.tsx",
+			],
 			thresholds: {
 				lines: 80,
 				functions: 80,

@@ -114,6 +114,83 @@ describe("ExtensionHostUiService", () => {
 
 		expect(context.getEditorText()).toBe("renderer draft");
 	});
+
+	test("publishes inline updates and compatibility issues for unsupported rich UI methods", async () => {
+		const fixture = createFixture();
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const context = fixture.service.createContext(workspaceId, sessionId);
+		const autocompleteFactory = undefined as unknown as Parameters<typeof context.addAutocompleteProvider>[0];
+		const customFactory = undefined as unknown as Parameters<typeof context.custom>[0];
+
+		context.notify("Heads up", "warning");
+		context.setStatus("build", "running");
+		context.setTitle("Extension title");
+		context.setEditorText("draft");
+		context.pasteToEditor(" plus");
+		context.setWorkingVisible(true);
+		context.setWorkingMessage("Working");
+		context.setWorkingIndicator();
+		context.setHiddenThinkingLabel("Thinking");
+		context.setWidget("widget", ["line"]);
+		context.setFooter(undefined);
+		context.setHeader(undefined);
+		context.addAutocompleteProvider(autocompleteFactory);
+		context.setEditorComponent(undefined);
+		context.setToolsExpanded(true);
+		expect(context.getEditorComponent()).toBeUndefined();
+		expect(context.getAllThemes()).toEqual([]);
+		expect(context.getTheme("missing")).toBeUndefined();
+		expect(context.getToolsExpanded()).toBe(false);
+		expect(context.setTheme("dark")).toEqual({
+			success: false,
+			error: "Theme mutation is not supported in Pi GUI",
+		});
+		await expect(context.custom(customFactory)).rejects.toThrow("Custom extension UI is not supported in Pi GUI");
+		expect((context.theme as unknown as Record<string, string>).background).toBe("");
+
+		expect(fixture.events.map((event) => event._tag)).toContain("extensionUi.updated");
+		expect(fixture.events.map((event) => event._tag)).toContain("extensionUi.compatibilityIssue");
+		expect(fixture.events).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					_tag: "extensionUi.updated",
+					update: expect.objectContaining({ kind: "notify" }),
+				}),
+				expect.objectContaining({
+					_tag: "extensionUi.updated",
+					update: expect.objectContaining({ kind: "status" }),
+				}),
+				expect.objectContaining({
+					_tag: "extensionUi.updated",
+					update: expect.objectContaining({ kind: "title" }),
+				}),
+				expect.objectContaining({
+					_tag: "extensionUi.updated",
+					update: expect.objectContaining({ kind: "editorText", editorText: "draft plus" }),
+				}),
+				expect.objectContaining({ _tag: "extensionUi.compatibilityIssue", method: "setWorkingVisible" }),
+				expect.objectContaining({ _tag: "extensionUi.compatibilityIssue", method: "theme" }),
+			]),
+		);
+	});
+
+	test("cancels pending session requests and clears mirrored editor text", async () => {
+		const fixture = createFixture();
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const context = fixture.service.createContext(workspaceId, sessionId);
+
+		const input = context.input("Name");
+		const confirm = context.confirm("Continue", "Run?");
+		fixture.service.updateEditorText(workspaceId, sessionId, "draft");
+		fixture.service.cancelSessionRequests(workspaceId, sessionId);
+
+		await expect(input).resolves.toBeUndefined();
+		await expect(confirm).resolves.toBe(false);
+		expect(context.getEditorText()).toBe("");
+		expect(fixture.events.filter((event) => event._tag === "extensionUi.resolved")).toHaveLength(2);
+	});
 });
 
 function createFixture() {

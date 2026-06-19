@@ -126,7 +126,7 @@ export class JsonCatalogStore {
 }
 
 export function defaultCatalogPath(): string {
-	return join(homedir(), ".pi", "gui", "catalog.json");
+	return join(process.env.HOME ?? homedir(), ".pi", "gui", "catalog.json");
 }
 
 function createEmptyState(): CatalogFileState {

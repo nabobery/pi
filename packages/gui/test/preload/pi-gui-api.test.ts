@@ -68,6 +68,31 @@ describe("createPiGuiApi", () => {
 		expect(listener).toHaveBeenCalledWith(event);
 	});
 
+	test("does not expose raw transport event objects to subscribers", () => {
+		let eventListener: ((event: unknown) => void) | undefined;
+		const rawTransportEvent = { sender: "electron" };
+		const invoke = vi.fn();
+		const on = vi.fn((_channel, listener: (event: unknown) => void) => {
+			eventListener = listener;
+			return () => undefined;
+		});
+		const listener = vi.fn();
+
+		const api = createPiGuiApi({ invoke, on });
+		api.subscribe(listener);
+		const event = { _tag: "receipt.emitted", receipt: "ok", rawTransportEvent };
+		eventListener?.(event);
+
+		expect(listener).toHaveBeenCalledWith(event);
+		expect(listener).not.toHaveBeenCalledWith(rawTransportEvent);
+	});
+
+	test("keeps the renderer API key surface fixed", () => {
+		const api = createPiGuiApi({ invoke: vi.fn(), on: vi.fn() });
+
+		expect(Reflect.ownKeys(api)).toEqual(["invoke", "subscribe"]);
+	});
+
 	test("delivers valid event payloads unchanged", () => {
 		let eventListener: ((event: unknown) => void) | undefined;
 		const invoke = vi.fn();
