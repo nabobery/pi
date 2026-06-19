@@ -34,13 +34,24 @@ export interface RuntimeAgentSession {
 		onError?: (error: unknown) => void;
 	}): Promise<void>;
 	clearQueue(): { steering: string[]; followUp: string[] };
+	compact?(customInstructions?: string): Promise<{
+		firstKeptEntryId: string;
+		summary: string;
+		tokensBefore: number;
+	}>;
 	followUpMode: "all" | "one-at-a-time";
 	getAvailableThinkingLevels(): ThinkingLevel[];
 	getCommands?(): SlashCommandInfo[];
 	getFollowUpMessages(): readonly string[];
 	getSteeringMessages(): readonly string[];
 	model?: RuntimeModel;
+	navigateTree?(
+		targetId: string,
+		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
+	): Promise<{ editorText?: string; cancelled: boolean; aborted?: boolean; summaryEntry?: { id: string } }>;
 	prompt(text: string, options?: PromptOptions): Promise<void>;
+	abortCompaction?(): void;
+	abortBranchSummary?(): void;
 	sessionManager?: RuntimeSessionManager;
 	setModel(model: RuntimeModel): Promise<void>;
 	setThinkingLevel(level: ThinkingLevel): void;

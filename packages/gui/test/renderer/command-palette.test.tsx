@@ -88,6 +88,38 @@ describe("command palette", () => {
 		expect(buttonByText("Compact session").disabled).toBe(true);
 	});
 
+	test("opens tree navigator and compact dialog for supported GUI built-ins", async () => {
+		const store = storeStub();
+		render(
+			<CommandPalette
+				selectedSessionId={sessionId}
+				selectedWorkspaceId={workspaceId}
+				state={stateWithCommandPalette([
+					{
+						name: "tree",
+						description: "Navigate session tree",
+						source: "builtin",
+						availability: "guiAction",
+					},
+					{
+						name: "compact",
+						description: "Compact session",
+						source: "builtin",
+						availability: "guiAction",
+					},
+				])}
+				store={store}
+			/>,
+		);
+
+		await click(buttonByText("Navigate session tree"));
+		await click(buttonByText("Compact session"));
+
+		expect(store.openTreeNavigator).toHaveBeenCalledWith(workspaceId, sessionId);
+		expect(store.openCompactDialog).toHaveBeenCalledWith(workspaceId, sessionId);
+		expect(store.closeCommandPalette).toHaveBeenCalledTimes(2);
+	});
+
 	test("supports keyboard filtering and selection", async () => {
 		const store = storeStub();
 		render(
@@ -463,6 +495,7 @@ function emptyState(): CatalogViewState {
 		runtimeOverlaysBySessionKey: {},
 		activityBySessionKey: {},
 		slashCommandCatalogsBySessionKey: {},
+		treesBySessionKey: {},
 		sessionRenameRequestsBySessionKey: {},
 		commandPalette: { open: false, query: "", selectedIndex: 0, loading: false, error: undefined },
 		resumePicker: {
@@ -477,6 +510,27 @@ function emptyState(): CatalogViewState {
 			loading: false,
 			error: undefined,
 			result: undefined,
+		},
+		treeNavigator: {
+			open: false,
+			workspaceId: undefined,
+			sessionId: undefined,
+			query: "",
+			filterMode: "default",
+			selectedEntryId: undefined,
+			foldedEntryIds: [],
+			loading: false,
+			error: undefined,
+		},
+		compactDialog: {
+			open: false,
+			workspaceId: undefined,
+			sessionId: undefined,
+			customInstructions: "",
+			compacting: false,
+			error: undefined,
+			lastResult: undefined,
+			cancelling: false,
 		},
 		error: undefined,
 		pending: false,
@@ -533,17 +587,24 @@ function storeStub(): GuiCatalogStore {
 		archiveSession: vi.fn().mockResolvedValue(undefined),
 		cancelRun: vi.fn().mockResolvedValue(undefined),
 		closeCommandPalette: vi.fn(),
+		closeCompactDialog: vi.fn(),
 		closeResumePicker: vi.fn(),
 		closeSession: vi.fn().mockResolvedValue(undefined),
+		closeTreeNavigator: vi.fn(),
+		compactSession: vi.fn().mockResolvedValue(undefined),
 		createSession: vi.fn().mockResolvedValue(undefined),
 		getSettingsSummary: vi.fn().mockResolvedValue(undefined),
 		getSlashCommands: vi.fn().mockResolvedValue(undefined),
 		getSnapshot: vi.fn(),
+		getTree: vi.fn().mockResolvedValue(undefined),
 		getTranscript: vi.fn().mockResolvedValue(undefined),
 		getTrustStatus: vi.fn().mockResolvedValue(undefined),
 		openCommandPalette: vi.fn(),
+		openCompactDialog: vi.fn(),
 		openResumePicker: vi.fn().mockResolvedValue(undefined),
 		openSession: vi.fn().mockResolvedValue(undefined),
+		openTreeNavigator: vi.fn(),
+		navigateTree: vi.fn().mockResolvedValue(undefined),
 		openSettingsFile: vi.fn().mockResolvedValue(undefined),
 		pickWorkspaceDirectory: vi.fn().mockResolvedValue(undefined),
 		renameResumeSession: vi.fn().mockResolvedValue(undefined),
@@ -560,13 +621,22 @@ function storeStub(): GuiCatalogStore {
 		sendMessage: vi.fn().mockResolvedValue(true),
 		setCommandPaletteQuery: vi.fn(),
 		setCommandPaletteSelectedIndex: vi.fn(),
+		setCompactInstructions: vi.fn(),
 		setComposerDraft: vi.fn(),
 		setModel: vi.fn().mockResolvedValue(undefined),
 		setResumePickerSelectedIndex: vi.fn(),
 		setResumePickerShowPaths: vi.fn(),
 		setThinkingLevel: vi.fn().mockResolvedValue(undefined),
+		setTreeEntryLabel: vi.fn().mockResolvedValue(undefined),
+		setTreeNavigatorFilterMode: vi.fn(),
+		setTreeNavigatorQuery: vi.fn(),
+		setTreeNavigatorSelectedEntry: vi.fn(),
 		subscribe: vi.fn(),
 		syncWorkspace: vi.fn().mockResolvedValue(undefined),
+		cancelCompaction: vi.fn().mockResolvedValue(undefined),
+		cancelTreeNavigation: vi.fn().mockResolvedValue(undefined),
+		collapseTreeNavigatorEntry: vi.fn(),
+		expandTreeNavigatorEntry: vi.fn(),
 		unarchiveSession: vi.fn().mockResolvedValue(undefined),
 	};
 }

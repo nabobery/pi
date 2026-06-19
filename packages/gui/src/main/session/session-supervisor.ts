@@ -1,4 +1,8 @@
 import {
+	CompactionCancelled,
+	CompactionCompleted,
+	CompactionFailed,
+	CompactionStarted,
 	ModelThinkingUpdated,
 	QueueUpdated,
 	ReceiptEmitted,
@@ -7,6 +11,7 @@ import {
 	RunFailed,
 	RunStarted,
 	SessionCancelFailed,
+	SessionCompactFailed,
 	SessionClosed,
 	SessionFileMissing,
 	SessionActivityUpdated,
@@ -17,10 +22,16 @@ import {
 	SessionRuntimeNotFound,
 	SessionRunNotActive,
 	SessionStatusChanged,
+	SessionTreeLabelUpdateFailed,
+	SessionTreeNavigationFailed,
 	TimelineMessageDelta,
 	ToolFinished,
 	ToolStarted,
 	ToolUpdated,
+	TreeNavigationCompleted,
+	TreeNavigationFailed,
+	TreeNavigationStarted,
+	TreeUpdated,
 	WorkspaceNotFound,
 	type GuiEvent,
 	type ExtensionUiRequestId,
@@ -30,11 +41,15 @@ import {
 	type RequestId,
 	type RunId,
 	type SessionCatalogSnapshot,
+	type SessionCompactionSnapshot,
 	type SessionId,
 	type SessionSnapshot,
+	type SessionTreeSnapshot,
 	type SlashCommandSnapshot,
 	type TimelineSnapshot,
 	type ThinkingLevel,
+	type TreeNavigationSnapshot,
+	type TreeNavigationSummaryMode,
 	type WorkspaceCatalogSnapshot,
 	type WorkspaceId,
 	runIdFromString,
@@ -72,6 +87,7 @@ interface ManagedSessionRecord {
 	activeRunId?: RunId;
 	handle: RuntimeSessionHandle;
 	lastActivitySequence: number;
+	manualCompactionActive: boolean;
 	needsInput: boolean;
 	queueSnapshot: QueueSnapshot;
 	session: SessionSnapshot;
@@ -230,6 +246,150 @@ export class SessionSupervisor {
 		return this.driver.getTranscript(record.handle);
 	}
 
+	async getTree(workspaceId: WorkspaceId, sessionId: SessionId): Promise<SessionTreeSnapshot> {
+		return this.driver.getTree(this.getRecord(workspaceId, sessionId).handle);
+	}
+
+	async setTreeEntryLabel(
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		entryId: string,
+		label: string | undefined,
+	): Promise<SessionTreeSnapshot> {
+		const record = this.getRecord(workspaceId, sessionId);
+		try {
+			const tree = await this.driver.setTreeEntryLabel(record.handle, entryId, label);
+			this.publishTree(tree);
+			return tree;
+		} catch (error) {
+			if (error instanceof SessionTreeLabelUpdateFailed) throw error;
+			throw new SessionTreeLabelUpdateFailed({
+				workspaceId,
+				sessionId,
+				entryId,
+				message: "Failed to update Pi session tree label",
+				cause: getErrorMessage(error),
+			});
+		}
+	}
+
+	async navigateTree(request: {
+		workspaceId: WorkspaceId;
+		sessionId: SessionId;
+		targetEntryId: string;
+		summaryMode: TreeNavigationSummaryMode;
+		customInstructions?: string;
+		label?: string;
+	}): Promise<TreeNavigationSnapshot> {
+		const record = this.getRecord(request.workspaceId, request.sessionId);
+		if (record.activeRunId) {
+			throw new SessionTreeNavigationFailed({
+				workspaceId: request.workspaceId,
+				sessionId: request.sessionId,
+				targetEntryId: request.targetEntryId,
+				message: "Tree navigation is unavailable while a prompt run is active",
+			});
+		}
+		this.eventBus.publish(
+			new TreeNavigationStarted({
+				...this.eventBus.nextEventBase(),
+				workspaceId: request.workspaceId,
+				sessionId: request.sessionId,
+				targetEntryId: request.targetEntryId,
+			}),
+		);
+		this.setRecordStatus(record, "navigating");
+		try {
+			const result = await this.driver.navigateTree(record.handle, {
+				targetEntryId: request.targetEntryId,
+				summaryMode: request.summaryMode,
+				...(request.customInstructions ? { customInstructions: request.customInstructions } : {}),
+				...(request.label ? { label: request.label } : {}),
+			});
+			this.publishTree(result.tree);
+			this.eventBus.publish(new TreeNavigationCompleted({ ...this.eventBus.nextEventBase(), result }));
+			this.setRecordStatus(record, "ready");
+			return result;
+		} catch (error) {
+			const guiError =
+				error instanceof SessionTreeNavigationFailed
+					? error
+					: new SessionTreeNavigationFailed({
+							workspaceId: request.workspaceId,
+							sessionId: request.sessionId,
+							targetEntryId: request.targetEntryId,
+							message: "Failed to navigate Pi session tree",
+							cause: getErrorMessage(error),
+						});
+			this.eventBus.publish(
+				new TreeNavigationFailed({
+					...this.eventBus.nextEventBase(),
+					workspaceId: request.workspaceId,
+					sessionId: request.sessionId,
+					targetEntryId: request.targetEntryId,
+					error: guiError,
+				}),
+			);
+			this.setRecordStatus(record, "ready");
+			throw guiError;
+		}
+	}
+
+	async compact(
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		customInstructions: string | undefined,
+	): Promise<SessionCompactionSnapshot> {
+		const record = this.getRecord(workspaceId, sessionId);
+		if (record.activeRunId) {
+			throw new SessionCompactFailed({
+				workspaceId,
+				sessionId,
+				message: "Manual compaction is unavailable while a prompt run is active",
+			});
+		}
+		this.eventBus.publish(
+			new CompactionStarted({ ...this.eventBus.nextEventBase(), workspaceId, sessionId, reason: "manual" }),
+		);
+		this.setRecordStatus(record, "compacting");
+		record.manualCompactionActive = true;
+		try {
+			const result = await this.driver.compact(record.handle, customInstructions);
+			this.publishTree(result.tree);
+			this.eventBus.publish(new CompactionCompleted({ ...this.eventBus.nextEventBase(), result }));
+			this.setRecordStatus(record, "ready");
+			return result;
+		} catch (error) {
+			const guiError =
+				error instanceof SessionCompactFailed
+					? error
+					: new SessionCompactFailed({
+							workspaceId,
+							sessionId,
+							message: "Failed to compact Pi session",
+							cause: getErrorMessage(error),
+						});
+			this.eventBus.publish(
+				new CompactionFailed({ ...this.eventBus.nextEventBase(), workspaceId, sessionId, error: guiError }),
+			);
+			this.setRecordStatus(record, "ready");
+			throw guiError;
+		} finally {
+			record.manualCompactionActive = false;
+		}
+	}
+
+	async cancelCompaction(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void> {
+		const record = this.getRecord(workspaceId, sessionId);
+		await this.driver.cancelCompaction(record.handle);
+		this.eventBus.publish(new CompactionCancelled({ ...this.eventBus.nextEventBase(), workspaceId, sessionId }));
+		this.setRecordStatus(record, "ready");
+	}
+
+	async cancelTreeNavigation(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void> {
+		await this.driver.cancelTreeNavigation(this.getRecord(workspaceId, sessionId).handle);
+	}
+
 	async getSlashCommands(workspaceId: WorkspaceId, sessionId: SessionId): Promise<SlashCommandSnapshot[]> {
 		const getSlashCommands = this.driver.getSlashCommands;
 		if (!getSlashCommands) return [];
@@ -351,6 +511,7 @@ export class SessionSupervisor {
 			this.records.set(key, {
 				handle,
 				lastActivitySequence: 0,
+				manualCompactionActive: false,
 				needsInput: false,
 				queueSnapshot,
 				session: readySession,
@@ -410,10 +571,96 @@ export class SessionSupervisor {
 		this.eventBus.publish(new ModelThinkingUpdated({ ...this.eventBus.nextEventBase(), snapshot }));
 	}
 
+	private publishTree(tree: SessionTreeSnapshot): void {
+		this.eventBus.publish(new TreeUpdated({ ...this.eventBus.nextEventBase(), tree }));
+	}
+
+	private async completeRuntimeCompaction(
+		record: ManagedSessionRecord,
+		event: Extract<RuntimeSessionEvent, { type: "compaction_end" }>,
+	): Promise<void> {
+		const { sessionId, workspaceId } = record.handle;
+		if (event.aborted) {
+			this.eventBus.publish(new CompactionCancelled({ ...this.eventBus.nextEventBase(), workspaceId, sessionId }));
+			this.setRecordStatus(record, "ready");
+			return;
+		}
+		if (event.errorMessage) {
+			this.eventBus.publish(
+				new CompactionFailed({
+					...this.eventBus.nextEventBase(),
+					workspaceId,
+					sessionId,
+					error: new SessionCompactFailed({
+						workspaceId,
+						sessionId,
+						message: "Pi session compaction failed",
+						cause: event.errorMessage,
+					}),
+				}),
+			);
+			this.setRecordStatus(record, "ready");
+			return;
+		}
+		const timeline = await this.driver.getTranscript(record.handle);
+		const tree = await this.driver.getTree(record.handle);
+		const result: SessionCompactionSnapshot = {
+			workspaceId,
+			sessionId,
+			...(event.result?.summary ? { summary: event.result.summary } : {}),
+			...(event.result?.firstKeptEntryId ? { firstKeptEntryId: event.result.firstKeptEntryId } : {}),
+			...(typeof event.result?.tokensBefore === "number" ? { tokensBefore: event.result.tokensBefore } : {}),
+			timeline,
+			tree,
+			cancelled: false,
+		};
+		this.publishTree(tree);
+		this.eventBus.publish(new CompactionCompleted({ ...this.eventBus.nextEventBase(), result }));
+		this.setRecordStatus(record, "ready");
+	}
+
+	private failRuntimeCompaction(record: ManagedSessionRecord, error: unknown): void {
+		const { sessionId, workspaceId } = record.handle;
+		this.eventBus.publish(
+			new CompactionFailed({
+				...this.eventBus.nextEventBase(),
+				workspaceId,
+				sessionId,
+				error: new SessionCompactFailed({
+					workspaceId,
+					sessionId,
+					message: "Failed to refresh compacted Pi session",
+					cause: getErrorMessage(error),
+				}),
+			}),
+		);
+		this.setRecordStatus(record, "ready");
+	}
+
 	private handleRuntimeEvent(key: RuntimeSessionKey, event: RuntimeSessionEvent): void {
 		const record = this.records.get(key);
 		if (!record) return;
 		const runId = record.activeRunId;
+		if (event.type === "compaction_start") {
+			if (record.manualCompactionActive) return;
+			this.eventBus.publish(
+				new CompactionStarted({
+					...this.eventBus.nextEventBase(),
+					workspaceId: record.handle.workspaceId,
+					sessionId: record.handle.sessionId,
+					reason: "reason" in event && typeof event.reason === "string" ? event.reason : undefined,
+				}),
+			);
+			this.setRecordStatus(record, "compacting");
+			return;
+		}
+		if (event.type === "compaction_end") {
+			if (record.manualCompactionActive) return;
+			void this.completeRuntimeCompaction(record, event).catch((error: unknown) => {
+				this.failRuntimeCompaction(record, error);
+			});
+			return;
+		}
 		if (event.type === "queue_update") {
 			const queue = projectQueueSnapshot(record.handle, event, {
 				steeringMode: record.handle.runtime.session.steeringMode,

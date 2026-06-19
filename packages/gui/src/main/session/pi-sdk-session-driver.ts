@@ -4,6 +4,8 @@ import {
 	SessionModelNotFound,
 	SessionModelSetFailed,
 	SessionCancelFailed,
+	SessionCompactFailed,
+	SessionCompactionNotActive,
 	SessionPromptRejected,
 	SessionQueueRestoreFailed,
 	SessionRuntimeBindFailed,
@@ -12,14 +14,20 @@ import {
 	SessionRuntimeOpenFailed,
 	SessionThinkingSetFailed,
 	SessionTranscriptReadFailed,
+	SessionTreeLabelUpdateFailed,
+	SessionTreeNavigationFailed,
+	SessionTreeUnavailable,
 	sessionIdFromString,
 	type ModelOptionSnapshot,
 	type ModelThinkingSnapshot,
 	type QueueSnapshot,
+	type SessionCompactionSnapshot,
 	type SessionId,
+	type SessionTreeSnapshot,
 	type SlashCommandSnapshot,
 	type ThinkingLevel,
 	type TimelineSnapshot,
+	type TreeNavigationSnapshot,
 	type WorkspaceId,
 } from "../../contracts/index.ts";
 import { createRuntimeSessionKey } from "./session-key.ts";
@@ -27,12 +35,14 @@ import { projectQueueRestoreSnapshot, projectQueueSnapshot } from "./queue-proje
 import { projectTimelineSnapshot } from "./timeline-projection.ts";
 import type {
 	OpenRuntimeSessionRequest,
+	NavigateRuntimeTreeRequest,
 	RuntimeSessionHandle,
 	RuntimeTranscriptSessionManager,
 	SendRuntimeMessageRequest,
 	SendRuntimeMessageResult,
 	SessionDriver,
 } from "./session-driver.ts";
+import { projectSessionTreeSnapshot } from "./tree-projection.ts";
 import { RuntimeSupervisor } from "./runtime-supervisor.ts";
 
 interface DriverSessionManager extends RuntimeTranscriptSessionManager {
@@ -159,6 +169,148 @@ export class PiSdkSessionDriver implements SessionDriver {
 				sessionId: handle.sessionId,
 				sessionFilePath: handle.sessionFilePath,
 				message: "Failed to read Pi session transcript",
+				cause: getErrorMessage(error),
+			});
+		}
+	}
+
+	async getTree(handle: RuntimeSessionHandle): Promise<SessionTreeSnapshot> {
+		try {
+			const getTree = handle.sessionManager.getTree;
+			const getLeafId = handle.sessionManager.getLeafId;
+			if (!getTree || !getLeafId) throw new Error("Session manager tree API is unavailable");
+			return projectSessionTreeSnapshot({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				leafEntryId: getLeafId.call(handle.sessionManager),
+				tree: getTree.call(handle.sessionManager),
+				getLabel: (entryId) => handle.sessionManager.getLabel?.(entryId),
+			});
+		} catch (error) {
+			throw new SessionTreeUnavailable({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				message: "Failed to read Pi session tree",
+				cause: getErrorMessage(error),
+			});
+		}
+	}
+
+	async navigateTree(
+		handle: RuntimeSessionHandle,
+		request: NavigateRuntimeTreeRequest,
+	): Promise<TreeNavigationSnapshot> {
+		try {
+			const navigateTree = handle.runtime.session.navigateTree;
+			if (!navigateTree) throw new Error("Runtime tree navigation API is unavailable");
+			const result = await navigateTree.call(handle.runtime.session, request.targetEntryId, {
+				summarize: request.summaryMode !== "none",
+				...(request.customInstructions ? { customInstructions: request.customInstructions } : {}),
+				...(request.label ? { label: request.label } : {}),
+			});
+			const tree = await this.getTree(handle);
+			const timeline = await this.getTranscript(handle);
+			return {
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				tree,
+				timeline,
+				...(result.editorText ? { editorText: result.editorText } : {}),
+				clearsComposer: !result.editorText,
+				cancelled: result.cancelled,
+				...(result.aborted ? { aborted: result.aborted } : {}),
+				...(result.summaryEntry?.id ? { summaryEntryId: result.summaryEntry.id } : {}),
+			};
+		} catch (error) {
+			throw new SessionTreeNavigationFailed({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				targetEntryId: request.targetEntryId,
+				message: "Failed to navigate Pi session tree",
+				cause: getErrorMessage(error),
+			});
+		}
+	}
+
+	async setTreeEntryLabel(
+		handle: RuntimeSessionHandle,
+		entryId: string,
+		label: string | undefined,
+	): Promise<SessionTreeSnapshot> {
+		try {
+			const appendLabelChange = handle.sessionManager.appendLabelChange;
+			if (!appendLabelChange) throw new Error("Session manager label API is unavailable");
+			appendLabelChange.call(handle.sessionManager, entryId, label?.trim() || undefined);
+			return this.getTree(handle);
+		} catch (error) {
+			throw new SessionTreeLabelUpdateFailed({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				entryId,
+				message: "Failed to update Pi session tree label",
+				cause: getErrorMessage(error),
+			});
+		}
+	}
+
+	async compact(
+		handle: RuntimeSessionHandle,
+		customInstructions: string | undefined,
+	): Promise<SessionCompactionSnapshot> {
+		try {
+			const compact = handle.runtime.session.compact;
+			if (!compact) throw new Error("Runtime compaction API is unavailable");
+			const result = await compact.call(handle.runtime.session, customInstructions);
+			return {
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				summary: result.summary,
+				firstKeptEntryId: result.firstKeptEntryId,
+				tokensBefore: result.tokensBefore,
+				timeline: await this.getTranscript(handle),
+				tree: await this.getTree(handle),
+				cancelled: false,
+			};
+		} catch (error) {
+			throw new SessionCompactFailed({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				message: "Failed to compact Pi session",
+				cause: getErrorMessage(error),
+			});
+		}
+	}
+
+	async cancelCompaction(handle: RuntimeSessionHandle): Promise<void> {
+		try {
+			const abortCompaction = handle.runtime.session.abortCompaction;
+			if (!abortCompaction) throw new Error("Runtime compaction cancellation API is unavailable");
+			abortCompaction.call(handle.runtime.session);
+		} catch (error) {
+			throw new SessionCompactionNotActive({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				message: `No active compaction can be cancelled: ${getErrorMessage(error)}`,
+			});
+		}
+	}
+
+	async cancelTreeNavigation(handle: RuntimeSessionHandle): Promise<void> {
+		const abortBranchSummary = handle.runtime.session.abortBranchSummary;
+		if (!abortBranchSummary) {
+			throw new SessionTreeNavigationFailed({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				message: "This Pi runtime does not expose branch summary cancellation",
+			});
+		}
+		try {
+			abortBranchSummary.call(handle.runtime.session);
+		} catch (error) {
+			throw new SessionTreeNavigationFailed({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				message: "Failed to cancel Pi session tree navigation",
 				cause: getErrorMessage(error),
 			});
 		}

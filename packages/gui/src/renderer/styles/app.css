@@ -524,13 +524,19 @@ button:not(:disabled) {
 }
 
 .command-modal input,
-.command-modal select {
+.command-modal select,
+.command-modal textarea {
 	min-width: 0;
 	border: 1px solid #c8c7bd;
 	border-radius: 6px;
 	background: #ffffff;
 	color: #22221f;
 	padding: 8px 10px;
+}
+
+.command-modal textarea {
+	min-height: 120px;
+	resize: vertical;
 }
 
 .modal-title-row,
@@ -574,6 +580,66 @@ button:not(:disabled) {
 
 .command-list--tall {
 	max-height: 500px;
+}
+
+.tree-list {
+	gap: 2px;
+}
+
+.tree-row {
+	display: grid;
+	grid-template-columns: 92px minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	min-height: 32px;
+	border: 1px solid transparent;
+	border-radius: 5px;
+	background: transparent;
+	color: #22221f;
+	text-align: left;
+}
+
+.tree-row:hover,
+.tree-row:focus-visible,
+.tree-row--selected {
+	border-color: #aaa89d;
+	background: #f0f0eb;
+}
+
+.tree-row--path {
+	background: #f7f7f3;
+}
+
+.tree-row--leaf .tree-row__kind {
+	color: #315e55;
+}
+
+.tree-row__kind {
+	color: #77746a;
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+}
+
+.tree-row__text {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tree-row__label {
+	border: 1px solid #c8c7bd;
+	border-radius: 999px;
+	padding: 2px 7px;
+	color: #77746a;
+	font-size: 11px;
+}
+
+.tree-actions {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto auto;
+	gap: 8px;
 }
 
 .command-row,

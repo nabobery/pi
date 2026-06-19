@@ -23,19 +23,25 @@ import {
 	SettingsRevealGlobalFile,
 	SettingsRevealProjectFile,
 	SettingsSummaryUpdated,
+	SessionCompact,
 	SessionArchive,
+	SessionCancelCompaction,
 	SessionCancelRun,
+	SessionCancelTreeNavigation,
 	SessionClose,
 	SessionCatalogUpdated,
 	SessionCreate,
 	SessionGetTranscript,
 	SessionGetSlashCommands,
+	SessionGetTree,
+	SessionNavigateTree,
 	SessionOpen,
 	SessionRename,
 	SessionRestoreQueuedMessages,
 	SessionSendMessage,
 	SessionSetModel,
 	SessionSetThinkingLevel,
+	SessionSetTreeEntryLabel,
 	SessionSelected,
 	SessionUnarchive,
 	TrustGetStatus,
@@ -99,7 +105,13 @@ export interface CreateGuiInvokeHandlerOptions {
 		| "setModel"
 		| "setThinkingLevel"
 		| "updateExtensionEditorText"
-	>;
+	> &
+		Partial<
+			Pick<
+				SessionSupervisor,
+				"cancelCompaction" | "cancelTreeNavigation" | "compact" | "getTree" | "navigateTree" | "setTreeEntryLabel"
+			>
+		>;
 	slashCommandService?: Pick<SlashCommandService, "getCatalog">;
 }
 
@@ -321,6 +333,58 @@ async function handleGuiCommand(
 			return { ok: true, requestId: command.requestId, data: catalog };
 		}
 
+		if (command instanceof SessionGetTree && options.sessionSupervisor?.getTree) {
+			const tree = await options.sessionSupervisor.getTree(command.workspaceId, command.sessionId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: tree };
+		}
+
+		if (command instanceof SessionNavigateTree && options.sessionSupervisor?.navigateTree) {
+			const result = await options.sessionSupervisor.navigateTree({
+				workspaceId: command.workspaceId,
+				sessionId: command.sessionId,
+				targetEntryId: command.targetEntryId,
+				summaryMode: command.summaryMode,
+				...(command.customInstructions ? { customInstructions: command.customInstructions } : {}),
+				...(command.label ? { label: command.label } : {}),
+			});
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: result };
+		}
+
+		if (command instanceof SessionSetTreeEntryLabel && options.sessionSupervisor?.setTreeEntryLabel) {
+			const tree = await options.sessionSupervisor.setTreeEntryLabel(
+				command.workspaceId,
+				command.sessionId,
+				command.entryId,
+				command.label,
+			);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: tree };
+		}
+
+		if (command instanceof SessionCompact && options.sessionSupervisor?.compact) {
+			const result = await options.sessionSupervisor.compact(
+				command.workspaceId,
+				command.sessionId,
+				command.customInstructions,
+			);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: result };
+		}
+
+		if (command instanceof SessionCancelCompaction && options.sessionSupervisor?.cancelCompaction) {
+			await options.sessionSupervisor.cancelCompaction(command.workspaceId, command.sessionId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
+		if (command instanceof SessionCancelTreeNavigation && options.sessionSupervisor?.cancelTreeNavigation) {
+			await options.sessionSupervisor.cancelTreeNavigation(command.workspaceId, command.sessionId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
 		if (command instanceof ResumeSearch && options.resumeService) {
 			const snapshot = await options.resumeService.search({
 				workspaceId: command.workspaceId,
@@ -489,7 +553,7 @@ async function handleGuiCommand(
 			command.requestId,
 			new CommandNotImplemented({
 				commandTag: command._tag,
-				message: `${command._tag} is not implemented in Phase 4`,
+				message: `${command._tag} is not implemented`,
 			}),
 		);
 	} catch (error) {

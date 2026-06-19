@@ -25,6 +25,8 @@ export const SessionStatus = Schema.Literal(
 	"opening",
 	"ready",
 	"replacing",
+	"navigating",
+	"compacting",
 	"running",
 	"cancelling",
 	"failed",
@@ -63,6 +65,80 @@ export const TimelineSnapshot = Schema.Struct({
 export type TimelineSnapshot = Schema.Schema.Type<typeof TimelineSnapshot>;
 export const decodeTimelineSnapshot = (value: unknown): Promise<TimelineSnapshot> =>
 	Effect.runPromise(Schema.decodeUnknown(TimelineSnapshot)(value));
+
+export const TreeFilterMode = Schema.Literal("default", "no-tools", "user-only", "labeled-only", "all");
+export type TreeFilterMode = Schema.Schema.Type<typeof TreeFilterMode>;
+
+export const TreeEntryKind = Schema.Literal(
+	"user",
+	"assistant",
+	"tool",
+	"system",
+	"branchSummary",
+	"compaction",
+	"custom",
+	"unknown",
+);
+export type TreeEntryKind = Schema.Schema.Type<typeof TreeEntryKind>;
+
+export const SessionTreeEntrySnapshot = Schema.Struct({
+	entryId: Schema.String,
+	parentId: Schema.Union(Schema.String, Schema.Null),
+	childIds: Schema.Array(Schema.String),
+	depth: Schema.Number,
+	kind: TreeEntryKind,
+	textPreview: Schema.String,
+	label: Schema.optional(Schema.String),
+	labelTimestamp: Schema.optional(Schema.String),
+	isActiveLeaf: Schema.Boolean,
+	isActivePath: Schema.Boolean,
+	hasChildren: Schema.Boolean,
+	searchText: Schema.String,
+});
+export type SessionTreeEntrySnapshot = Schema.Schema.Type<typeof SessionTreeEntrySnapshot>;
+
+export const SessionTreeSnapshot = Schema.Struct({
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	leafEntryId: Schema.Union(Schema.String, Schema.Null),
+	entries: Schema.Array(SessionTreeEntrySnapshot),
+	updatedAt: Schema.String,
+});
+export type SessionTreeSnapshot = Schema.Schema.Type<typeof SessionTreeSnapshot>;
+export const decodeSessionTreeSnapshot = (value: unknown): Promise<SessionTreeSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(SessionTreeSnapshot)(value));
+
+export const TreeNavigationSummaryMode = Schema.Literal("none", "default", "custom");
+export type TreeNavigationSummaryMode = Schema.Schema.Type<typeof TreeNavigationSummaryMode>;
+
+export const TreeNavigationSnapshot = Schema.Struct({
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	tree: SessionTreeSnapshot,
+	timeline: TimelineSnapshot,
+	editorText: Schema.optional(Schema.String),
+	clearsComposer: Schema.Boolean,
+	cancelled: Schema.Boolean,
+	aborted: Schema.optional(Schema.Boolean),
+	summaryEntryId: Schema.optional(Schema.String),
+});
+export type TreeNavigationSnapshot = Schema.Schema.Type<typeof TreeNavigationSnapshot>;
+export const decodeTreeNavigationSnapshot = (value: unknown): Promise<TreeNavigationSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(TreeNavigationSnapshot)(value));
+
+export const SessionCompactionSnapshot = Schema.Struct({
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	summary: Schema.optional(Schema.String),
+	firstKeptEntryId: Schema.optional(Schema.String),
+	tokensBefore: Schema.optional(Schema.Number),
+	timeline: TimelineSnapshot,
+	tree: SessionTreeSnapshot,
+	cancelled: Schema.Boolean,
+});
+export type SessionCompactionSnapshot = Schema.Schema.Type<typeof SessionCompactionSnapshot>;
+export const decodeSessionCompactionSnapshot = (value: unknown): Promise<SessionCompactionSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(SessionCompactionSnapshot)(value));
 
 export const ThinkingLevel = Schema.Literal("off", "minimal", "low", "medium", "high", "xhigh");
 export type ThinkingLevel = Schema.Schema.Type<typeof ThinkingLevel>;

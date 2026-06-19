@@ -297,6 +297,59 @@ describe("createGuiCatalogStore", () => {
 		});
 	});
 
+	test("recovers tree navigator state when loading rejects", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const store = createGuiCatalogStore(
+			{
+				invoke: vi.fn().mockRejectedValue(new Error("bridge down")),
+				subscribe: () => () => undefined,
+			},
+			{ revision: catalogRevisionFromString("0"), workspaces: [] },
+		);
+
+		store.openTreeNavigator(workspaceId, sessionId);
+		await flushPromises();
+
+		expect(store.getSnapshot().treeNavigator).toMatchObject({
+			open: true,
+			loading: false,
+			error: "bridge down",
+		});
+	});
+
+	test("cancels an active compaction and clears pending state", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const invoke = vi.fn().mockResolvedValue({
+			ok: true,
+			requestId: requestIdFromString("request-1"),
+			data: undefined,
+		});
+		const store = createGuiCatalogStore(
+			{
+				invoke,
+				subscribe: () => () => undefined,
+			},
+			{ revision: catalogRevisionFromString("0"), workspaces: [] },
+		);
+
+		store.openCompactDialog(workspaceId, sessionId);
+		store.setCompactInstructions("keep decisions");
+		await store.cancelCompaction(workspaceId, sessionId);
+
+		expect(invoke.mock.calls[0]?.[0]).toMatchObject({
+			_tag: "session.cancelCompaction",
+			workspaceId,
+			sessionId,
+		});
+		expect(store.getSnapshot().compactDialog).toMatchObject({
+			compacting: false,
+			cancelling: false,
+			error: undefined,
+		});
+	});
+
 	test("reports prompt acceptance and preserves drafts when send is rejected before acceptance", async () => {
 		const workspaceId = workspaceIdFromString("workspace-1");
 		const sessionId = sessionIdFromString("session-1");
@@ -1117,6 +1170,10 @@ function deferredInvokeResult() {
 		resolve = nextResolve;
 	});
 	return { promise, resolve };
+}
+
+async function flushPromises(): Promise<void> {
+	await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function resumeSearchSnapshot(

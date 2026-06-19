@@ -194,6 +194,51 @@ export class SessionQueueRestoreFailed extends Schema.TaggedError<SessionQueueRe
 	},
 ) {}
 
+export class SessionTreeUnavailable extends Schema.TaggedError<SessionTreeUnavailable>()("SessionTreeUnavailable", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class SessionTreeNavigationFailed extends Schema.TaggedError<SessionTreeNavigationFailed>()(
+	"SessionTreeNavigationFailed",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		targetEntryId: Schema.optional(Schema.String),
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
+
+export class SessionTreeLabelUpdateFailed extends Schema.TaggedError<SessionTreeLabelUpdateFailed>()(
+	"SessionTreeLabelUpdateFailed",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		entryId: Schema.String,
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
+
+export class SessionCompactFailed extends Schema.TaggedError<SessionCompactFailed>()("SessionCompactFailed", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class SessionCompactionNotActive extends Schema.TaggedError<SessionCompactionNotActive>()(
+	"SessionCompactionNotActive",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		message: Schema.String,
+	},
+) {}
+
 export class SlashCommandCatalogUnavailable extends Schema.TaggedError<SlashCommandCatalogUnavailable>()(
 	"SlashCommandCatalogUnavailable",
 	{
@@ -375,6 +420,11 @@ export const GuiError = Schema.Union(
 	SessionPromptFailed,
 	SessionCancelFailed,
 	SessionQueueRestoreFailed,
+	SessionTreeUnavailable,
+	SessionTreeNavigationFailed,
+	SessionTreeLabelUpdateFailed,
+	SessionCompactFailed,
+	SessionCompactionNotActive,
 	SlashCommandCatalogUnavailable,
 	ResumeSearchFailed,
 	ResumeOpenFailed,

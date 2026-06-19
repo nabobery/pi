@@ -9,11 +9,15 @@ import {
 	ResumeScope,
 	ResumeSearchSnapshot,
 	ResumeSortMode,
+	SessionCompactionSnapshot,
 	SessionCatalogSnapshot,
+	SessionTreeSnapshot,
 	SettingsSummarySnapshot,
 	SlashCommandCatalogSnapshot,
 	ThinkingLevel,
 	TimelineSnapshot,
+	TreeNavigationSnapshot,
+	TreeNavigationSummaryMode,
 	TrustStatusSnapshot,
 	WorkspaceCatalogSnapshot,
 } from "./snapshots.ts";
@@ -157,6 +161,70 @@ export class SessionGetSlashCommands extends Schema.TaggedRequest<SessionGetSlas
 	{
 		failure: GuiError,
 		success: SlashCommandCatalogSnapshot,
+		payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
+	},
+) {}
+
+export class SessionGetTree extends Schema.TaggedRequest<SessionGetTree>()("session.getTree", {
+	failure: GuiError,
+	success: SessionTreeSnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
+}) {}
+
+export class SessionNavigateTree extends Schema.TaggedRequest<SessionNavigateTree>()("session.navigateTree", {
+	failure: GuiError,
+	success: TreeNavigationSnapshot,
+	payload: {
+		requestId: RequestId,
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		targetEntryId: Schema.String,
+		summaryMode: TreeNavigationSummaryMode,
+		customInstructions: Schema.optional(Schema.String),
+		label: Schema.optional(Schema.String),
+	},
+}) {}
+
+export class SessionSetTreeEntryLabel extends Schema.TaggedRequest<SessionSetTreeEntryLabel>()(
+	"session.setTreeEntryLabel",
+	{
+		failure: GuiError,
+		success: SessionTreeSnapshot,
+		payload: {
+			requestId: RequestId,
+			workspaceId: WorkspaceId,
+			sessionId: SessionId,
+			entryId: Schema.String,
+			label: Schema.optional(Schema.String),
+		},
+	},
+) {}
+
+export class SessionCompact extends Schema.TaggedRequest<SessionCompact>()("session.compact", {
+	failure: GuiError,
+	success: SessionCompactionSnapshot,
+	payload: {
+		requestId: RequestId,
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		customInstructions: Schema.optional(Schema.String),
+	},
+}) {}
+
+export class SessionCancelCompaction extends Schema.TaggedRequest<SessionCancelCompaction>()(
+	"session.cancelCompaction",
+	{
+		failure: GuiError,
+		success: VoidSuccess,
+		payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
+	},
+) {}
+
+export class SessionCancelTreeNavigation extends Schema.TaggedRequest<SessionCancelTreeNavigation>()(
+	"session.cancelTreeNavigation",
+	{
+		failure: GuiError,
+		success: VoidSuccess,
 		payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
 	},
 ) {}
@@ -309,6 +377,12 @@ export const GuiCommand = Schema.Union(
 	SessionSetThinkingLevel,
 	SessionGetTranscript,
 	SessionGetSlashCommands,
+	SessionGetTree,
+	SessionNavigateTree,
+	SessionSetTreeEntryLabel,
+	SessionCompact,
+	SessionCancelCompaction,
+	SessionCancelTreeNavigation,
 	ResumeSearch,
 	ResumeOpen,
 	ResumeRename,

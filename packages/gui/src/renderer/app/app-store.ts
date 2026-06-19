@@ -19,6 +19,7 @@ import {
 	SessionSetThinkingLevel,
 	SessionUnarchive,
 	type SessionSnapshot,
+	type SessionTreeSnapshot,
 	SettingsGetSummary,
 	SettingsOpenGlobalFile,
 	SettingsOpenProjectFile,
@@ -26,7 +27,6 @@ import {
 	SettingsRevealProjectFile,
 	type SettingsSummarySnapshot,
 	type ModelThinkingSnapshot,
-	type QueueRestoreSnapshot,
 	type QueueSnapshot,
 	type SessionActivitySnapshot,
 	type SlashCommandCatalogSnapshot,
@@ -41,13 +41,6 @@ import {
 	WorkspaceSync,
 	decodeGuiCommandResult,
 	decodeGuiEvent,
-	decodeModelThinkingSnapshot,
-	decodeQueueRestoreSnapshot,
-	decodeSessionCatalogSnapshot,
-	decodeSettingsSummarySnapshot,
-	decodeTimelineSnapshot,
-	decodeTrustStatusSnapshot,
-	decodeWorkspaceCatalogSnapshot,
 	type GuiCommand,
 	type GuiCommandResult,
 	type GuiEvent,
@@ -66,6 +59,7 @@ import {
 	setSessionStatus,
 	withRuntimeOverlay,
 } from "./session-state-projections.ts";
+import { applyCommandResultData, decodeQueueRestoreData } from "./app-result-appliers.ts";
 import {
 	createPhase9StoreActions,
 	emptyCommandPaletteState,
@@ -73,6 +67,16 @@ import {
 	type CommandPaletteState,
 	type ResumePickerState,
 } from "./phase9-store.ts";
+import {
+	applyCompactionResult,
+	applyNavigationResult,
+	applyTreeEvent,
+	createTreeAndCompactionStoreActions,
+	emptyCompactDialogState,
+	emptyTreeNavigatorState,
+	type CompactDialogState,
+	type TreeNavigatorState,
+} from "./tree-and-compaction-store.ts";
 
 export interface RendererCatalogApi {
 	invoke(command: GuiCommand): Promise<GuiCommandResult>;
@@ -97,9 +101,12 @@ export interface CatalogViewState {
 	runtimeOverlaysBySessionKey: Readonly<Record<string, SessionRuntimeOverlay>>;
 	activityBySessionKey: Readonly<Record<string, SessionActivitySnapshot>>;
 	slashCommandCatalogsBySessionKey: Readonly<Record<string, SlashCommandCatalogSnapshot>>;
+	treesBySessionKey: Readonly<Record<string, SessionTreeSnapshot>>;
 	sessionRenameRequestsBySessionKey: Readonly<Record<string, number>>;
 	commandPalette: CommandPaletteState;
 	resumePicker: ResumePickerState;
+	treeNavigator: TreeNavigatorState;
+	compactDialog: CompactDialogState;
 	error: string | undefined;
 	pending: boolean;
 }
@@ -119,21 +126,38 @@ export interface ExtensionUiSessionState {
 
 export interface GuiCatalogStore {
 	archiveSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
+	cancelCompaction(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	cancelRun(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
+	cancelTreeNavigation(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	closeSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	createSession(workspaceId: WorkspaceId): Promise<void>;
 	closeCommandPalette(): void;
+	closeCompactDialog(): void;
 	closeResumePicker(): void;
+	closeTreeNavigator(): void;
+	compactSession(workspaceId: WorkspaceId, sessionId: SessionId, customInstructions: string): Promise<void>;
+	collapseTreeNavigatorEntry(entryId: string): void;
+	expandTreeNavigatorEntry(entryId: string): void;
 	getSlashCommands(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	getSnapshot(): CatalogViewState;
 	getSettingsSummary(workspaceId: WorkspaceId): Promise<void>;
+	getTree(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	getTrustStatus(workspaceId: WorkspaceId): Promise<void>;
 	getTranscript(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	openSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	openCommandPalette(query?: string): void;
+	openCompactDialog(workspaceId: WorkspaceId, sessionId: SessionId): void;
 	openResumePicker(workspaceId: WorkspaceId): Promise<void>;
 	openSettingsFile(workspaceId: WorkspaceId, scope: "global" | "project"): Promise<void>;
 	pickWorkspaceDirectory(): Promise<void>;
+	openTreeNavigator(workspaceId: WorkspaceId, sessionId: SessionId): void;
+	navigateTree(request: {
+		workspaceId: WorkspaceId;
+		sessionId: SessionId;
+		targetEntryId: string;
+		summaryMode: "none" | "default" | "custom";
+		customInstructions?: string;
+	}): Promise<void>;
 	respondToExtensionUi(
 		workspaceId: WorkspaceId,
 		sessionId: SessionId,
@@ -167,10 +191,15 @@ export interface GuiCatalogStore {
 	setComposerDraft(workspaceId: WorkspaceId, sessionId: SessionId, value: string): void;
 	setCommandPaletteQuery(query: string): void;
 	setCommandPaletteSelectedIndex(selectedIndex: number): void;
+	setCompactInstructions(customInstructions: string): void;
 	setModel(workspaceId: WorkspaceId, sessionId: SessionId, provider: string, modelId: string): Promise<void>;
 	setResumePickerShowPaths(showPaths: boolean): void;
 	setResumePickerSelectedIndex(selectedIndex: number): void;
 	setThinkingLevel(workspaceId: WorkspaceId, sessionId: SessionId, thinkingLevel: ThinkingLevel): Promise<void>;
+	setTreeEntryLabel(workspaceId: WorkspaceId, sessionId: SessionId, entryId: string, label: string): Promise<void>;
+	setTreeNavigatorFilterMode(filterMode: TreeNavigatorState["filterMode"]): void;
+	setTreeNavigatorQuery(query: string): void;
+	setTreeNavigatorSelectedEntry(selectedEntryId: string | undefined): void;
 	subscribe(listener: () => void): () => void;
 	syncWorkspace(workspaceId: WorkspaceId): Promise<void>;
 	unarchiveSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
@@ -200,9 +229,12 @@ export function createGuiCatalogStore(
 		runtimeOverlaysBySessionKey: {},
 		activityBySessionKey: {},
 		slashCommandCatalogsBySessionKey: {},
+		treesBySessionKey: {},
 		sessionRenameRequestsBySessionKey: {},
 		commandPalette: emptyCommandPaletteState(),
 		resumePicker: emptyResumePickerState(),
+		treeNavigator: emptyTreeNavigatorState(),
+		compactDialog: emptyCompactDialogState(),
 		error: options.initialError,
 		pending: false,
 	};
@@ -233,7 +265,7 @@ export function createGuiCatalogStore(
 			setState({ ...state, error: result.error.message, pending: false });
 			return false;
 		}
-		setState({ ...(await applyResult(state, result.data)), pending: false });
+		setState({ ...(await applyCommandResultData(state, result.data)), pending: false });
 		return true;
 	}
 
@@ -242,6 +274,13 @@ export function createGuiCatalogStore(
 	}
 
 	const phase9Actions = createPhase9StoreActions({
+		api,
+		getState: () => state,
+		invoke,
+		nextRequestId,
+		updateState,
+	});
+	const treeAndCompactionActions = createTreeAndCompactionStoreActions({
 		api,
 		getState: () => state,
 		invoke,
@@ -307,7 +346,7 @@ export function createGuiCatalogStore(
 				setState({ ...state, error: result.error.message, pending: false });
 				return;
 			}
-			const restored = await decodeQueueRestore(result.data);
+			const restored = await decodeQueueRestoreData(result.data);
 			setState({ ...(restored ? applyQueueRestore(state, restored) : state), pending: false });
 		},
 		selectWorkspace: (workspaceId) =>
@@ -362,6 +401,7 @@ export function createGuiCatalogStore(
 		unarchiveSession: (workspaceId, sessionId) =>
 			invokeVoid(new SessionUnarchive({ requestId: nextRequestId("session.unarchive"), workspaceId, sessionId })),
 		...phase9Actions,
+		...treeAndCompactionActions,
 	};
 
 	async function updateExtensionEditorText(
@@ -463,6 +503,7 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 		const { [key]: _closedActivity, ...activityBySessionKey } = state.activityBySessionKey;
 		const { [key]: _closedSlashCommandCatalog, ...slashCommandCatalogsBySessionKey } =
 			state.slashCommandCatalogsBySessionKey;
+		const { [key]: _closedTree, ...treesBySessionKey } = state.treesBySessionKey;
 		if (!previous) {
 			return {
 				...state,
@@ -473,6 +514,7 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 				runtimeOverlaysBySessionKey,
 				activityBySessionKey,
 				slashCommandCatalogsBySessionKey,
+				treesBySessionKey,
 			};
 		}
 		const sessions: SessionSnapshot[] = [];
@@ -488,6 +530,7 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 			runtimeOverlaysBySessionKey,
 			activityBySessionKey,
 			slashCommandCatalogsBySessionKey,
+			treesBySessionKey,
 			sessionCatalogs: {
 				...state.sessionCatalogs,
 				[event.workspaceId]: {
@@ -563,6 +606,38 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 	}
 	if (event._tag === "run.cancelled") {
 		return markSessionActivity(setSessionStatus(state, event.workspaceId, event.sessionId, "ready"), event);
+	}
+	if (event._tag === "tree.updated") {
+		return applyTreeEvent(state, event.tree);
+	}
+	if (event._tag === "tree.navigationCompleted") {
+		return applyNavigationResult(state, event.result);
+	}
+	if (event._tag === "compaction.started") {
+		return {
+			...setSessionStatus(state, event.workspaceId, event.sessionId, "compacting"),
+			compactDialog: { ...state.compactDialog, compacting: true, cancelling: false, error: undefined },
+		};
+	}
+	if (event._tag === "compaction.completed") {
+		return setSessionStatus(
+			applyCompactionResult(state, event.result),
+			event.result.workspaceId,
+			event.result.sessionId,
+			"ready",
+		);
+	}
+	if (event._tag === "compaction.failed") {
+		return {
+			...setSessionStatus(state, event.workspaceId, event.sessionId, "ready"),
+			compactDialog: { ...state.compactDialog, compacting: false, cancelling: false, error: event.error.message },
+		};
+	}
+	if (event._tag === "compaction.cancelled") {
+		return {
+			...setSessionStatus(state, event.workspaceId, event.sessionId, "ready"),
+			compactDialog: { ...state.compactDialog, compacting: false, cancelling: false },
+		};
 	}
 	if (event._tag === "queue.updated") {
 		return markSessionActivity(
@@ -669,120 +744,6 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 		}));
 	}
 	return state;
-}
-
-async function applyResult(state: CatalogViewState, data: unknown): Promise<CatalogViewState> {
-	const workspaceCatalog = await decodeWorkspaceCatalog(data);
-	if (workspaceCatalog) return { ...state, workspaceCatalog };
-	const sessionCatalog = await decodeSessionCatalog(data);
-	if (sessionCatalog) {
-		return {
-			...state,
-			sessionCatalogs: {
-				...state.sessionCatalogs,
-				[sessionCatalog.workspaceId]: mergeSessionCatalog(state, sessionCatalog),
-			},
-		};
-	}
-	const timeline = await decodeTimeline(data);
-	if (timeline) {
-		return {
-			...state,
-			timelines: {
-				...state.timelines,
-				[timelineKey(timeline.workspaceId, timeline.sessionId)]: timeline,
-			},
-		};
-	}
-	const modelThinking = await decodeModelThinking(data);
-	if (modelThinking) {
-		return {
-			...state,
-			modelThinkingBySessionKey: {
-				...state.modelThinkingBySessionKey,
-				[timelineKey(modelThinking.workspaceId, modelThinking.sessionId)]: modelThinking,
-			},
-		};
-	}
-	const settingsSummary = await decodeSettingsSummary(data);
-	if (settingsSummary) {
-		return {
-			...state,
-			settingsSummaryByWorkspaceId: {
-				...state.settingsSummaryByWorkspaceId,
-				[settingsSummary.workspaceId]: settingsSummary,
-			},
-		};
-	}
-	const trustStatus = await decodeTrustStatus(data);
-	if (trustStatus) {
-		return {
-			...state,
-			trustStatusByWorkspaceId: {
-				...state.trustStatusByWorkspaceId,
-				[trustStatus.workspaceId]: trustStatus,
-			},
-		};
-	}
-	const queueRestore = await decodeQueueRestore(data);
-	if (queueRestore) return applyQueueRestore(state, queueRestore);
-	return state;
-}
-
-async function decodeWorkspaceCatalog(data: unknown): Promise<WorkspaceCatalogSnapshot | undefined> {
-	try {
-		return await decodeWorkspaceCatalogSnapshot(data);
-	} catch {
-		return undefined;
-	}
-}
-
-async function decodeSessionCatalog(data: unknown): Promise<SessionCatalogSnapshot | undefined> {
-	try {
-		return await decodeSessionCatalogSnapshot(data);
-	} catch {
-		return undefined;
-	}
-}
-
-async function decodeTimeline(data: unknown): Promise<TimelineSnapshot | undefined> {
-	try {
-		return await decodeTimelineSnapshot(data);
-	} catch {
-		return undefined;
-	}
-}
-
-async function decodeModelThinking(data: unknown): Promise<ModelThinkingSnapshot | undefined> {
-	try {
-		return await decodeModelThinkingSnapshot(data);
-	} catch {
-		return undefined;
-	}
-}
-
-async function decodeSettingsSummary(data: unknown): Promise<SettingsSummarySnapshot | undefined> {
-	try {
-		return await decodeSettingsSummarySnapshot(data);
-	} catch {
-		return undefined;
-	}
-}
-
-async function decodeTrustStatus(data: unknown): Promise<TrustStatusSnapshot | undefined> {
-	try {
-		return await decodeTrustStatusSnapshot(data);
-	} catch {
-		return undefined;
-	}
-}
-
-async function decodeQueueRestore(data: unknown): Promise<QueueRestoreSnapshot | undefined> {
-	try {
-		return await decodeQueueRestoreSnapshot(data);
-	} catch {
-		return undefined;
-	}
 }
 
 function upsertSession(state: CatalogViewState, session: SessionCatalogSnapshot["sessions"][number]): CatalogViewState {

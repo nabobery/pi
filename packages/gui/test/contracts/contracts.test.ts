@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { Effect, Schema } from "effect";
 import {
 	AppBootstrap,
 	AppReady,
@@ -17,6 +18,10 @@ import {
 	ResumeUnarchive,
 	RunCancelled,
 	RunCompleted,
+	SessionCompact,
+	SessionCancelCompaction,
+	SessionCancelTreeNavigation,
+	SessionCompactionSnapshot,
 	SessionCancelFailed,
 	SessionArchive,
 	SessionCatalogSnapshot,
@@ -24,15 +29,22 @@ import {
 	SessionClosed,
 	SessionGetTranscript,
 	SessionGetSlashCommands,
+	SessionGetTree,
 	SessionPromptFailed,
 	SessionPromptRejected,
 	SessionRuntimeNotFound,
 	SessionRunNotActive,
 	SessionSendMessage,
+	SessionSetTreeEntryLabel,
+	SessionTreeSnapshot,
+	SessionTreeUnavailable,
+	SessionNavigateTree,
 	SessionRename,
 	SessionSelected,
 	TimelineSnapshot,
 	TimelineMessageDelta,
+	TreeNavigationSnapshot,
+	TreeUpdated,
 	WorkspacePickDirectory,
 	WorkspaceRemove,
 	WorkspaceSynced,
@@ -57,7 +69,7 @@ describe("gui contracts", () => {
 		expect(command.requestId).toBe("request-1");
 	});
 
-	test("decodes phase 3 workspace and session commands", async () => {
+	test("decodes workspace and session commands", async () => {
 		await expect(
 			decodeGuiCommand(new WorkspacePickDirectory({ requestId: requestIdFromString("request-2") })),
 		).resolves.toBeInstanceOf(WorkspacePickDirectory);
@@ -154,6 +166,68 @@ describe("gui contracts", () => {
 		).resolves.toBeInstanceOf(ResumeUnarchive);
 	});
 
+	test("decodes tree and compaction commands", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+
+		await expect(
+			decodeGuiCommand(
+				new SessionGetTree({ requestId: requestIdFromString("request-tree"), workspaceId, sessionId }),
+			),
+		).resolves.toBeInstanceOf(SessionGetTree);
+		await expect(
+			decodeGuiCommand(
+				new SessionNavigateTree({
+					requestId: requestIdFromString("request-tree-nav"),
+					workspaceId,
+					sessionId,
+					targetEntryId: "entry-user-1",
+					summaryMode: "custom",
+					customInstructions: "focus on decisions",
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionNavigateTree);
+		await expect(
+			decodeGuiCommand(
+				new SessionSetTreeEntryLabel({
+					requestId: requestIdFromString("request-tree-label"),
+					workspaceId,
+					sessionId,
+					entryId: "entry-user-1",
+					label: "checkpoint",
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionSetTreeEntryLabel);
+		await expect(
+			decodeGuiCommand(
+				new SessionCompact({
+					requestId: requestIdFromString("request-compact"),
+					workspaceId,
+					sessionId,
+					customInstructions: "keep file edits",
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionCompact);
+		await expect(
+			decodeGuiCommand(
+				new SessionCancelCompaction({
+					requestId: requestIdFromString("request-cancel-compact"),
+					workspaceId,
+					sessionId,
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionCancelCompaction);
+		await expect(
+			decodeGuiCommand(
+				new SessionCancelTreeNavigation({
+					requestId: requestIdFromString("request-cancel-tree"),
+					workspaceId,
+					sessionId,
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionCancelTreeNavigation);
+	});
+
 	test("decodes prompt commands with explicit running delivery modes", async () => {
 		const workspaceId = workspaceIdFromString("workspace-1");
 		const sessionId = sessionIdFromString("session-1");
@@ -222,7 +296,94 @@ describe("gui contracts", () => {
 		expect(event.sequence).toBe(1);
 	});
 
-	test("decodes phase 3 catalog events", async () => {
+	test("decodes tree and compaction snapshots and events", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const tree = {
+			workspaceId,
+			sessionId,
+			leafEntryId: "entry-assistant-1",
+			entries: [
+				{
+					entryId: "entry-user-1",
+					parentId: null,
+					childIds: ["entry-assistant-1"],
+					depth: 0,
+					kind: "user",
+					textPreview: "hello",
+					label: "start",
+					isActiveLeaf: false,
+					isActivePath: true,
+					hasChildren: true,
+					searchText: "user hello start",
+				},
+				{
+					entryId: "entry-assistant-1",
+					parentId: "entry-user-1",
+					childIds: [],
+					depth: 1,
+					kind: "assistant",
+					textPreview: "hi",
+					isActiveLeaf: true,
+					isActivePath: true,
+					hasChildren: false,
+					searchText: "assistant hi",
+				},
+			],
+			updatedAt: "2026-06-20T00:00:00.000Z",
+		} as const;
+
+		await expect(Effect.runPromise(SessionTreeSnapshot.pipe(Schema.decodeUnknown)(tree))).resolves.toEqual(tree);
+		await expect(
+			Effect.runPromise(
+				TreeNavigationSnapshot.pipe(Schema.decodeUnknown)({
+					workspaceId,
+					sessionId,
+					tree,
+					timeline: { workspaceId, sessionId, entries: [] },
+					editorText: "hello",
+					clearsComposer: false,
+					cancelled: false,
+				}),
+			),
+		).resolves.toMatchObject({ editorText: "hello" });
+		await expect(
+			Effect.runPromise(
+				SessionCompactionSnapshot.pipe(Schema.decodeUnknown)({
+					workspaceId,
+					sessionId,
+					summary: "Compacted",
+					tokensBefore: 1200,
+					timeline: { workspaceId, sessionId, entries: [] },
+					tree,
+					cancelled: false,
+				}),
+			),
+		).resolves.toMatchObject({ summary: "Compacted" });
+		await expect(
+			Effect.runPromise(SessionTreeSnapshot.pipe(Schema.decodeUnknown)({ ...tree, entries: [{ bad: true }] })),
+		).rejects.toThrow();
+		await expect(
+			decodeGuiEvent(
+				new TreeUpdated({
+					eventId: eventIdFromString("event-tree"),
+					sequence: 99,
+					tree,
+				}),
+			),
+		).resolves.toBeInstanceOf(TreeUpdated);
+		await expect(
+			decodeGuiError(
+				new SessionTreeUnavailable({
+					workspaceId,
+					sessionId,
+					message: "Tree is unavailable",
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionTreeUnavailable);
+	});
+
+	test("decodes catalog events", async () => {
 		const workspaceId = workspaceIdFromString("workspace-1");
 		const sessionId = sessionIdFromString("session-1");
 		await expect(
@@ -315,7 +476,7 @@ describe("gui contracts", () => {
 		const error = await decodeGuiError(
 			new CommandNotImplemented({
 				commandTag: "session.open",
-				message: "Command is not implemented in Phase 2",
+				message: "Command is not implemented",
 			}),
 		);
 
@@ -323,7 +484,7 @@ describe("gui contracts", () => {
 		expect(error._tag).toBe("CommandNotImplemented");
 	});
 
-	test("decodes phase 3 catalog errors", async () => {
+	test("decodes catalog errors", async () => {
 		const error = await decodeGuiError(
 			new InvalidWorkspacePath({
 				path: "/missing/project",
@@ -335,7 +496,7 @@ describe("gui contracts", () => {
 		expect(error._tag).toBe("InvalidWorkspacePath");
 	});
 
-	test("decodes phase 4 runtime errors", async () => {
+	test("decodes runtime errors", async () => {
 		const error = await decodeGuiError(
 			new SessionRuntimeNotFound({
 				workspaceId: "workspace-1",
@@ -348,7 +509,7 @@ describe("gui contracts", () => {
 		expect(error._tag).toBe("SessionRuntimeNotFound");
 	});
 
-	test("decodes phase 5 prompt errors", async () => {
+	test("decodes prompt errors", async () => {
 		await expect(
 			decodeGuiError(
 				new SessionPromptRejected({

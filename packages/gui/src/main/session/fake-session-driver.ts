@@ -1,10 +1,13 @@
 import {
+	type SessionCompactionSnapshot,
 	type ModelThinkingSnapshot,
 	type QueueRestoreSnapshot,
 	type QueueSnapshot,
 	type SessionId,
+	type SessionTreeSnapshot,
 	type SlashCommandSnapshot,
 	type TimelineSnapshot,
+	type TreeNavigationSnapshot,
 	sessionIdFromString,
 } from "../../contracts/index.ts";
 import { projectQueueRestoreSnapshot, projectQueueSnapshot } from "./queue-projection.ts";
@@ -16,17 +19,22 @@ import type {
 	SendRuntimeMessageRequest,
 	SendRuntimeMessageResult,
 	SessionDriver,
+	NavigateRuntimeTreeRequest,
 } from "./session-driver.ts";
 import type { ManagedAgentRuntime, RuntimeAgentSession } from "./runtime-supervisor.ts";
 import type { ExtensionHostUiService } from "./extension-host-ui-service.ts";
+import { projectSessionTreeSnapshot, type PiSessionTreeNode } from "./tree-projection.ts";
 
 interface FakeRuntimeState {
 	activeRun: FakeActiveRun | undefined;
 	entries: TimelineSnapshot["entries"];
 	extensionUiContext?: ReturnType<ExtensionHostUiService["createContext"]>;
 	followUpQueue: string[];
+	labelsByEntryId: Map<string, string>;
+	leafEntryId: string | null;
 	listeners: Set<(event: RuntimeSessionEvent) => void>;
 	steeringQueue: string[];
+	tree: PiSessionTreeNode[];
 }
 
 interface FakeActiveRun {
@@ -69,8 +77,11 @@ export class FakeSessionDriver implements SessionDriver {
 			entries: [{ id: "fake-entry-1", kind: "user", text: "Fake session ready." }],
 			extensionUiContext: this.extensionHostUiService?.createContext(request.workspaceId, sessionId),
 			followUpQueue: [],
+			labelsByEntryId: new Map(),
+			leafEntryId: "fake-assistant-1",
 			listeners: new Set(),
 			steeringQueue: [],
+			tree: createFakeTree(),
 		};
 		this.states.set(key, state);
 		return {
@@ -81,6 +92,16 @@ export class FakeSessionDriver implements SessionDriver {
 			sessionManager: {
 				getSessionId: () => sessionId,
 				getEntries: () => [],
+				getTree: () => state.tree,
+				getLeafId: () => state.leafEntryId,
+				getEntry: (id) => findFakeTreeEntry(state.tree, id),
+				getLabel: (id) => state.labelsByEntryId.get(id),
+				appendLabelChange: (id, label) => {
+					if (!findFakeTreeEntry(state.tree, id)) throw new Error(`Entry ${id} not found`);
+					if (label) state.labelsByEntryId.set(id, label);
+					else state.labelsByEntryId.delete(id);
+					return `fake-label-${id}`;
+				},
 			},
 			workspaceId: request.workspaceId,
 			workspacePath: request.workspacePath,
@@ -129,6 +150,122 @@ export class FakeSessionDriver implements SessionDriver {
 			sessionId: handle.sessionId,
 			entries: state.entries,
 		};
+	}
+
+	async getTree(handle: RuntimeSessionHandle): Promise<SessionTreeSnapshot> {
+		const state = this.requireState(handle);
+		return projectSessionTreeSnapshot({
+			workspaceId: handle.workspaceId,
+			sessionId: handle.sessionId,
+			leafEntryId: state.leafEntryId,
+			tree: state.tree,
+			getLabel: (entryId) => state.labelsByEntryId.get(entryId),
+		});
+	}
+
+	async navigateTree(
+		handle: RuntimeSessionHandle,
+		request: NavigateRuntimeTreeRequest,
+	): Promise<TreeNavigationSnapshot> {
+		const state = this.requireState(handle);
+		const target = findFakeTreeEntry(state.tree, request.targetEntryId);
+		if (!target) throw new Error(`Entry ${request.targetEntryId} not found`);
+		let editorText: string | undefined;
+		if (target.type === "message" && target.role === "user") {
+			editorText = typeof target.content === "string" ? target.content : "Fake user message";
+			state.leafEntryId = typeof target.parentId === "string" ? target.parentId : null;
+		} else {
+			state.leafEntryId = request.targetEntryId;
+		}
+		if (request.summaryMode !== "none") {
+			state.tree = [
+				...state.tree,
+				{
+					entry: {
+						id: `fake-summary-${state.tree.length + 1}`,
+						parentId: state.leafEntryId,
+						type: "branch_summary",
+						summary: request.customInstructions ?? "Fake branch summary",
+						timestamp: new Date().toISOString(),
+					},
+					children: [],
+				},
+			];
+		}
+		const tree = await this.getTree(handle);
+		return {
+			workspaceId: handle.workspaceId,
+			sessionId: handle.sessionId,
+			tree,
+			timeline: await this.getTranscript(handle),
+			...(editorText ? { editorText } : {}),
+			clearsComposer: !editorText,
+			cancelled: false,
+		};
+	}
+
+	async setTreeEntryLabel(
+		handle: RuntimeSessionHandle,
+		entryId: string,
+		label: string | undefined,
+	): Promise<SessionTreeSnapshot> {
+		const state = this.requireState(handle);
+		if (!findFakeTreeEntry(state.tree, entryId)) throw new Error(`Entry ${entryId} not found`);
+		if (label?.trim()) state.labelsByEntryId.set(entryId, label.trim());
+		else state.labelsByEntryId.delete(entryId);
+		return this.getTree(handle);
+	}
+
+	async compact(
+		handle: RuntimeSessionHandle,
+		customInstructions: string | undefined,
+	): Promise<SessionCompactionSnapshot> {
+		const state = this.requireState(handle);
+		this.emit(handle, { type: "compaction_start", reason: "manual" });
+		const summary = customInstructions ? `Compacted: ${customInstructions}` : "Compacted";
+		state.entries = [
+			...state.entries,
+			{ id: `fake-compaction-${state.entries.length + 1}`, kind: "system", text: summary },
+		];
+		state.tree = [
+			...state.tree,
+			{
+				entry: {
+					id: `fake-compaction-${state.tree.length + 1}`,
+					parentId: state.leafEntryId,
+					type: "compaction",
+					summary,
+					tokensBefore: 1200,
+					timestamp: new Date().toISOString(),
+				},
+				children: [],
+			},
+		];
+		this.emit(handle, {
+			type: "compaction_end",
+			reason: "manual",
+			result: { firstKeptEntryId: "fake-entry-1", summary, tokensBefore: 1200 },
+			aborted: false,
+			willRetry: false,
+		});
+		return {
+			workspaceId: handle.workspaceId,
+			sessionId: handle.sessionId,
+			summary,
+			firstKeptEntryId: "fake-entry-1",
+			tokensBefore: 1200,
+			timeline: await this.getTranscript(handle),
+			tree: await this.getTree(handle),
+			cancelled: false,
+		};
+	}
+
+	async cancelCompaction(): Promise<void> {
+		return;
+	}
+
+	async cancelTreeNavigation(): Promise<void> {
+		return;
 	}
 
 	async getQueue(handle: RuntimeSessionHandle): Promise<QueueSnapshot> {
@@ -330,6 +467,11 @@ function createFakeRuntime(state: FakeRuntimeState): ManagedAgentRuntime {
 			state.followUpQueue = [];
 			return restored;
 		},
+		compact: async (customInstructions) => ({
+			firstKeptEntryId: "fake-entry-1",
+			summary: customInstructions ? `Compacted: ${customInstructions}` : "Compacted",
+			tokensBefore: 1200,
+		}),
 		followUpMode: "all",
 		getAvailableThinkingLevels: () => ["off"],
 		getCommands: () => [
@@ -354,7 +496,19 @@ function createFakeRuntime(state: FakeRuntimeState): ManagedAgentRuntime {
 		],
 		getFollowUpMessages: () => state.followUpQueue,
 		getSteeringMessages: () => state.steeringQueue,
+		navigateTree: async (targetId) => {
+			const target = findFakeTreeEntry(state.tree, targetId);
+			if (!target) throw new Error(`Entry ${targetId} not found`);
+			if (target.type === "message" && target.role === "user") {
+				state.leafEntryId = typeof target.parentId === "string" ? target.parentId : null;
+				return { editorText: String(target.content ?? ""), cancelled: false };
+			}
+			state.leafEntryId = targetId;
+			return { cancelled: false };
+		},
 		prompt: async () => undefined,
+		abortCompaction: () => undefined,
+		abortBranchSummary: () => undefined,
 		setModel: async () => undefined,
 		setThinkingLevel: () => undefined,
 		steeringMode: "all",
@@ -371,6 +525,59 @@ function createFakeRuntime(state: FakeRuntimeState): ManagedAgentRuntime {
 		session,
 		dispose: async () => undefined,
 	};
+}
+
+function createFakeTree(): PiSessionTreeNode[] {
+	return [
+		{
+			entry: {
+				id: "fake-user-1",
+				parentId: null,
+				type: "message",
+				role: "user",
+				content: "Fake user prompt",
+				timestamp: new Date(Date.UTC(2026, 0, 1)).toISOString(),
+			},
+			children: [
+				{
+					entry: {
+						id: "fake-assistant-1",
+						parentId: "fake-user-1",
+						type: "message",
+						role: "assistant",
+						content: [{ type: "text", text: "Fake assistant reply" }],
+						timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, 1)).toISOString(),
+					},
+					children: [],
+				},
+				{
+					entry: {
+						id: "fake-tool-1",
+						parentId: "fake-user-1",
+						type: "tool_result",
+						toolName: "fakeTool",
+						output: "fake output",
+						timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, 2)).toISOString(),
+					},
+					children: [],
+				},
+			],
+		},
+	];
+}
+
+function findFakeTreeEntry(tree: readonly PiSessionTreeNode[], entryId: string): Record<string, unknown> | undefined {
+	for (const node of tree) {
+		const entry = node.entry;
+		if (isRecord(entry) && entry.id === entryId) return entry;
+		const child = findFakeTreeEntry(node.children, entryId);
+		if (child) return child;
+	}
+	return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
 }
 
 function fakeSourceInfo(path: string) {

@@ -5,17 +5,24 @@ import { describe, expect, test, vi } from "vitest";
 import {
 	AppBootstrap,
 	ExtensionUiUpdateEditorText,
+	SessionCompact,
 	SessionArchive,
+	SessionCancelCompaction,
 	type SessionCatalogSnapshot,
 	SessionCancelRun,
+	SessionCancelTreeNavigation,
 	SessionClose,
 	SessionCreate,
 	SessionGetTranscript,
+	SessionGetTree,
+	SessionNavigateTree,
 	SessionOpen,
 	SessionRename,
 	SessionRestoreQueuedMessages,
 	SessionSendMessage,
+	SessionSetTreeEntryLabel,
 	SessionUnarchive,
+	type SessionTreeSnapshot,
 	type TimelineSnapshot,
 	type WorkspaceCatalogSnapshot,
 	WorkspaceAdd,
@@ -145,7 +152,7 @@ describe("createGuiInvokeHandler", () => {
 		expect(result.ok).toBe(false);
 		if (!result.ok) {
 			expect(result.error._tag).toBe("CommandNotImplemented");
-			expect(result.error.message).toBe("session.cancelRun is not implemented in Phase 4");
+			expect(result.error.message).toBe("session.cancelRun is not implemented");
 		}
 	});
 
@@ -170,9 +177,13 @@ describe("createGuiInvokeHandler", () => {
 		};
 		const sessionSupervisor = {
 			cancelRun: vi.fn(async () => undefined),
+			cancelCompaction: vi.fn(async () => undefined),
+			cancelTreeNavigation: vi.fn(async () => undefined),
 			closeSession: vi.fn(async () => undefined),
+			compact: vi.fn(),
 			createSession: vi.fn(async () => sessions),
 			getModelThinking: vi.fn(),
+			getTree: vi.fn(),
 			getTranscript: vi.fn(
 				async (): Promise<TimelineSnapshot> => ({
 					workspaceId,
@@ -183,9 +194,11 @@ describe("createGuiInvokeHandler", () => {
 			openSession: vi.fn(async () => sessions),
 			respondToExtensionUi: vi.fn(),
 			restoreQueuedMessages: vi.fn(),
+			navigateTree: vi.fn(),
 			sendMessage: vi.fn(async () => undefined),
 			setModel: vi.fn(),
 			setThinkingLevel: vi.fn(),
+			setTreeEntryLabel: vi.fn(),
 			updateExtensionEditorText: vi.fn(),
 		};
 		const eventBus = new RendererEventBus();
@@ -220,6 +233,141 @@ describe("createGuiInvokeHandler", () => {
 		expect(sessionSupervisor.createSession).toHaveBeenCalledWith(workspaceId);
 		expect(sessionSupervisor.getTranscript).toHaveBeenCalledWith(workspaceId, sessionId);
 		expect(sessionSupervisor.closeSession).toHaveBeenCalledWith(workspaceId, sessionId);
+	});
+
+	test("routes tree and compaction commands through the supervisor", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const tree: SessionTreeSnapshot = {
+			workspaceId,
+			sessionId,
+			leafEntryId: "entry-1",
+			updatedAt: "2026-06-20T00:00:00.000Z",
+			entries: [
+				{
+					entryId: "entry-1",
+					parentId: null,
+					childIds: [],
+					depth: 0,
+					kind: "user",
+					textPreview: "hello",
+					isActiveLeaf: true,
+					isActivePath: true,
+					hasChildren: false,
+					searchText: "user hello",
+				},
+			],
+		};
+		const timeline: TimelineSnapshot = { workspaceId, sessionId, entries: [] };
+		const sessionSupervisor = {
+			cancelRun: vi.fn(async () => undefined),
+			cancelCompaction: vi.fn(async () => undefined),
+			cancelTreeNavigation: vi.fn(async () => undefined),
+			closeSession: vi.fn(async () => undefined),
+			compact: vi.fn(async () => ({
+				workspaceId,
+				sessionId,
+				summary: "Compacted",
+				tokensBefore: 1200,
+				timeline,
+				tree,
+				cancelled: false,
+			})),
+			createSession: vi.fn(),
+			getModelThinking: vi.fn(),
+			getTree: vi.fn(async () => tree),
+			getTranscript: vi.fn(),
+			openSession: vi.fn(),
+			navigateTree: vi.fn(async () => ({
+				workspaceId,
+				sessionId,
+				tree,
+				timeline,
+				editorText: "hello",
+				clearsComposer: false,
+				cancelled: false,
+			})),
+			respondToExtensionUi: vi.fn(),
+			restoreQueuedMessages: vi.fn(),
+			sendMessage: vi.fn(async () => undefined),
+			setModel: vi.fn(),
+			setThinkingLevel: vi.fn(),
+			setTreeEntryLabel: vi.fn(async () => tree),
+			updateExtensionEditorText: vi.fn(),
+		};
+		const handler = createGuiInvokeHandler({
+			app,
+			eventBus: new RendererEventBus(),
+			mode: "test",
+			policy,
+			sessionSupervisor,
+		});
+		const sender = createSender();
+
+		const getTreeResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new SessionGetTree({ requestId: requestIdFromString("request-tree"), workspaceId, sessionId }),
+		);
+		const navigateResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new SessionNavigateTree({
+				requestId: requestIdFromString("request-tree-nav"),
+				workspaceId,
+				sessionId,
+				targetEntryId: "entry-1",
+				summaryMode: "none",
+			}),
+		);
+		const labelResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new SessionSetTreeEntryLabel({
+				requestId: requestIdFromString("request-label"),
+				workspaceId,
+				sessionId,
+				entryId: "entry-1",
+				label: "checkpoint",
+			}),
+		);
+		const compactResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new SessionCompact({
+				requestId: requestIdFromString("request-compact"),
+				workspaceId,
+				sessionId,
+				customInstructions: "keep files",
+			}),
+		);
+		const cancelCompactionResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new SessionCancelCompaction({
+				requestId: requestIdFromString("request-cancel-compact"),
+				workspaceId,
+				sessionId,
+			}),
+		);
+		const cancelTreeNavigationResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new SessionCancelTreeNavigation({
+				requestId: requestIdFromString("request-cancel-tree"),
+				workspaceId,
+				sessionId,
+			}),
+		);
+
+		expect(getTreeResult).toMatchObject({ ok: true, data: tree });
+		expect(navigateResult).toMatchObject({ ok: true, data: expect.objectContaining({ editorText: "hello" }) });
+		expect(labelResult).toMatchObject({ ok: true, data: tree });
+		expect(compactResult).toMatchObject({ ok: true, data: expect.objectContaining({ summary: "Compacted" }) });
+		expect(cancelCompactionResult).toMatchObject({ ok: true, data: undefined });
+		expect(cancelTreeNavigationResult).toMatchObject({ ok: true, data: undefined });
+		expect(sessionSupervisor.getTree).toHaveBeenCalledWith(workspaceId, sessionId);
+		expect(sessionSupervisor.navigateTree).toHaveBeenCalledWith(
+			expect.objectContaining({ workspaceId, sessionId, targetEntryId: "entry-1", summaryMode: "none" }),
+		);
+		expect(sessionSupervisor.setTreeEntryLabel).toHaveBeenCalledWith(workspaceId, sessionId, "entry-1", "checkpoint");
+		expect(sessionSupervisor.compact).toHaveBeenCalledWith(workspaceId, sessionId, "keep files");
+		expect(sessionSupervisor.cancelCompaction).toHaveBeenCalledWith(workspaceId, sessionId);
+		expect(sessionSupervisor.cancelTreeNavigation).toHaveBeenCalledWith(workspaceId, sessionId);
 	});
 
 	test("emits app.error when session runtime context preload fails", async () => {
@@ -533,7 +681,7 @@ describe("RendererEventBus", () => {
 	});
 });
 
-describe("Phase 3 catalog IPC commands", () => {
+describe("catalog IPC commands", () => {
 	test("workspace.add returns a catalog and emits workspace/session catalog events", async () => {
 		const fixture = await createCatalogFixture();
 		try {

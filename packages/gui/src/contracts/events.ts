@@ -6,11 +6,14 @@ import {
 	ExtensionUiStateSnapshot,
 	ModelThinkingSnapshot,
 	QueueSnapshot,
+	SessionCompactionSnapshot,
 	SessionActivitySnapshot,
 	SessionCatalogSnapshot,
 	SessionSnapshot,
+	SessionTreeSnapshot,
 	SettingsSummarySnapshot,
 	TimelineSnapshot,
+	TreeNavigationSnapshot,
 	TrustStatusSnapshot,
 	WorkspaceCatalogSnapshot,
 } from "./snapshots.ts";
@@ -157,6 +160,56 @@ export class RunCancelled extends Schema.TaggedClass<RunCancelled>()("run.cancel
 	sessionId: SessionId,
 }) {}
 
+export class TreeUpdated extends Schema.TaggedClass<TreeUpdated>()("tree.updated", {
+	...EventBaseFields,
+	tree: SessionTreeSnapshot,
+}) {}
+
+export class TreeNavigationStarted extends Schema.TaggedClass<TreeNavigationStarted>()("tree.navigationStarted", {
+	...EventBaseFields,
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	targetEntryId: Schema.String,
+}) {}
+
+export class TreeNavigationCompleted extends Schema.TaggedClass<TreeNavigationCompleted>()("tree.navigationCompleted", {
+	...EventBaseFields,
+	result: TreeNavigationSnapshot,
+}) {}
+
+export class TreeNavigationFailed extends Schema.TaggedClass<TreeNavigationFailed>()("tree.navigationFailed", {
+	...EventBaseFields,
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	targetEntryId: Schema.String,
+	error: GuiError,
+}) {}
+
+export class CompactionStarted extends Schema.TaggedClass<CompactionStarted>()("compaction.started", {
+	...EventBaseFields,
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	reason: Schema.optional(Schema.String),
+}) {}
+
+export class CompactionCompleted extends Schema.TaggedClass<CompactionCompleted>()("compaction.completed", {
+	...EventBaseFields,
+	result: SessionCompactionSnapshot,
+}) {}
+
+export class CompactionFailed extends Schema.TaggedClass<CompactionFailed>()("compaction.failed", {
+	...EventBaseFields,
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	error: GuiError,
+}) {}
+
+export class CompactionCancelled extends Schema.TaggedClass<CompactionCancelled>()("compaction.cancelled", {
+	...EventBaseFields,
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+}) {}
+
 export class ModelThinkingUpdated extends Schema.TaggedClass<ModelThinkingUpdated>()("modelThinking.updated", {
 	...EventBaseFields,
 	snapshot: ModelThinkingSnapshot,
@@ -222,6 +275,14 @@ export const GuiEvent = Schema.Union(
 	RunCompleted,
 	RunFailed,
 	RunCancelled,
+	TreeUpdated,
+	TreeNavigationStarted,
+	TreeNavigationCompleted,
+	TreeNavigationFailed,
+	CompactionStarted,
+	CompactionCompleted,
+	CompactionFailed,
+	CompactionCancelled,
 	ModelThinkingUpdated,
 	SettingsSummaryUpdated,
 	TrustStatusUpdated,

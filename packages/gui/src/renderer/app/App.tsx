@@ -16,6 +16,7 @@ import {
 import { loadBootstrapState, type LoadState } from "./bootstrap-loader.ts";
 import { MainPane, SessionSection, WorkspaceSection } from "./catalog-view.tsx";
 import { CommandPalette, ResumePicker } from "./command-palette.tsx";
+import { CompactDialog, TreeNavigator } from "./tree-navigator.tsx";
 
 export function App() {
 	const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
@@ -203,6 +204,14 @@ export function ReadyApp({
 					store={store}
 				/>
 				<ResumePicker selectedWorkspaceId={selectedWorkspace?.id} state={state} store={store} />
+				<TreeNavigator
+					draft={draft}
+					selectedSessionId={selectedSession?.id}
+					selectedWorkspaceId={selectedWorkspace?.id}
+					state={state}
+					store={store}
+				/>
+				<CompactDialog state={state} store={store} />
 				{selectedWorkspace && selectedSession && extensionUi ? (
 					<ExtensionUiLayer
 						draft={draft}

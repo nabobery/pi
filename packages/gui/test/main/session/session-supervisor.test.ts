@@ -1,10 +1,12 @@
 import { describe, expect, test, vi } from "vitest";
 import {
 	SessionCancelFailed,
+	SessionCompactFailed,
 	SessionOpenLimitReached,
 	SessionRuntimeNotFound,
 	SessionRuntimeCloseFailed,
 	SessionRunNotActive,
+	SessionTreeNavigationFailed,
 	catalogRevisionFromString,
 	sessionIdFromString,
 	workspaceIdFromString,
@@ -12,6 +14,9 @@ import {
 	type GuiEvent,
 	type SessionCatalogSnapshot,
 	type TimelineSnapshot,
+	type SessionTreeSnapshot,
+	type TreeNavigationSnapshot,
+	type SessionCompactionSnapshot,
 	type WorkspaceCatalogSnapshot,
 	eventIdFromString,
 	requestIdFromString,
@@ -71,6 +76,211 @@ describe("SessionSupervisor", () => {
 			sessionId: "session-1",
 			entries: [{ id: "entry-1", kind: "user", text: "hello" }],
 		});
+	});
+
+	test("returns tree snapshots and publishes label updates", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		fixture.events.length = 0;
+
+		const tree = await fixture.supervisor.getTree(
+			workspaceIdFromString("workspace-a"),
+			sessionIdFromString("session-1"),
+		);
+		const labeled = await fixture.supervisor.setTreeEntryLabel(
+			workspaceIdFromString("workspace-a"),
+			sessionIdFromString("session-1"),
+			"entry-1",
+			"checkpoint",
+		);
+
+		expect(tree.entries[0]).toMatchObject({ entryId: "entry-1", kind: "user" });
+		expect(labeled.entries[0]).toMatchObject({ label: "checkpoint" });
+		expect(fixture.driver.setTreeEntryLabel).toHaveBeenCalledWith(expect.any(Object), "entry-1", "checkpoint");
+		expect(fixture.events).toEqual([expect.objectContaining({ _tag: "tree.updated", tree: labeled })]);
+	});
+
+	test("navigates tree entries with status transitions and completion events", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		fixture.events.length = 0;
+
+		const result = await fixture.supervisor.navigateTree({
+			workspaceId: workspaceIdFromString("workspace-a"),
+			sessionId: sessionIdFromString("session-1"),
+			targetEntryId: "entry-1",
+			summaryMode: "default",
+		});
+
+		expect(result).toMatchObject({ editorText: "hello", clearsComposer: false, cancelled: false });
+		expect(fixture.driver.navigateTree).toHaveBeenCalledWith(
+			expect.any(Object),
+			expect.objectContaining({ targetEntryId: "entry-1", summaryMode: "default" }),
+		);
+		expect(fixture.events.map((event) => event._tag)).toEqual([
+			"tree.navigationStarted",
+			"session.statusChanged",
+			"tree.updated",
+			"tree.navigationCompleted",
+			"session.statusChanged",
+		]);
+	});
+
+	test("rejects tree navigation while a prompt run is active", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		await fixture.supervisor.sendMessage({
+			requestId: requestIdFromString("request-1"),
+			workspaceId: workspaceIdFromString("workspace-a"),
+			sessionId: sessionIdFromString("session-1"),
+			message: "hello",
+		});
+
+		await expect(
+			fixture.supervisor.navigateTree({
+				workspaceId: workspaceIdFromString("workspace-a"),
+				sessionId: sessionIdFromString("session-1"),
+				targetEntryId: "entry-1",
+				summaryMode: "none",
+			}),
+		).rejects.toBeInstanceOf(SessionTreeNavigationFailed);
+	});
+
+	test("manual compaction emits compaction events and refreshes transcript and tree", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		fixture.events.length = 0;
+
+		const result = await fixture.supervisor.compact(
+			workspaceIdFromString("workspace-a"),
+			sessionIdFromString("session-1"),
+			"keep file edits",
+		);
+
+		expect(result).toMatchObject({ summary: "Compacted", tokensBefore: 1200, cancelled: false });
+		expect(fixture.driver.compact).toHaveBeenCalledWith(expect.any(Object), "keep file edits");
+		expect(fixture.events.map((event) => event._tag)).toEqual([
+			"compaction.started",
+			"session.statusChanged",
+			"tree.updated",
+			"compaction.completed",
+			"session.statusChanged",
+		]);
+	});
+
+	test("manual compaction ignores runtime compaction lifecycle events from the driver", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		fixture.driver.compact = vi.fn(async (handle): Promise<SessionCompactionSnapshot> => {
+			fixture.emitRuntimeEvent({ type: "compaction_start", reason: "manual" });
+			fixture.emitRuntimeEvent({
+				type: "compaction_end",
+				reason: "manual",
+				result: { firstKeptEntryId: "entry-1", summary: "Compacted", tokensBefore: 1200 },
+				aborted: false,
+				willRetry: false,
+			});
+			return {
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				summary: "Compacted",
+				firstKeptEntryId: "entry-1",
+				tokensBefore: 1200,
+				timeline: { workspaceId: handle.workspaceId, sessionId: handle.sessionId, entries: [] },
+				tree: treeSnapshot(handle.workspaceId, handle.sessionId),
+				cancelled: false,
+			};
+		});
+		fixture.events.length = 0;
+
+		await fixture.supervisor.compact(
+			workspaceIdFromString("workspace-a"),
+			sessionIdFromString("session-1"),
+			"keep file edits",
+		);
+
+		expect(fixture.events.filter((event) => event._tag === "compaction.started")).toHaveLength(1);
+		expect(fixture.events.filter((event) => event._tag === "compaction.completed")).toHaveLength(1);
+		expect(fixture.events.map((event) => event._tag)).toEqual([
+			"compaction.started",
+			"session.statusChanged",
+			"tree.updated",
+			"compaction.completed",
+			"session.statusChanged",
+		]);
+	});
+
+	test("maps runtime-origin compaction end events to GUI completion, failure, and cancellation", async () => {
+		const success = createSupervisorFixture();
+		await success.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		success.events.length = 0;
+		success.emitRuntimeEvent({ type: "compaction_start", reason: "threshold" });
+		success.emitRuntimeEvent({
+			type: "compaction_end",
+			reason: "threshold",
+			result: { firstKeptEntryId: "entry-1", summary: "Auto compacted", tokensBefore: 1200 },
+			aborted: false,
+			willRetry: false,
+		});
+		await waitForEvent(success.events, "compaction.completed");
+
+		expect(success.events.map((event) => event._tag)).toEqual([
+			"compaction.started",
+			"session.statusChanged",
+			"tree.updated",
+			"compaction.completed",
+			"session.statusChanged",
+		]);
+		expect(success.events.find((event) => event._tag === "compaction.completed")).toMatchObject({
+			result: { summary: "Auto compacted", cancelled: false },
+		});
+
+		const failure = createSupervisorFixture();
+		await failure.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		failure.events.length = 0;
+		failure.emitRuntimeEvent({
+			type: "compaction_end",
+			reason: "threshold",
+			result: undefined,
+			aborted: false,
+			willRetry: false,
+			errorMessage: "provider failed",
+		});
+
+		expect(failure.events.map((event) => event._tag)).toEqual(["compaction.failed", "session.statusChanged"]);
+		expect(failure.events[0]).toMatchObject({ error: { cause: "provider failed" } });
+
+		const cancelled = createSupervisorFixture();
+		await cancelled.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		cancelled.events.length = 0;
+		cancelled.emitRuntimeEvent({
+			type: "compaction_end",
+			reason: "manual",
+			result: undefined,
+			aborted: true,
+			willRetry: false,
+		});
+
+		expect(cancelled.events.map((event) => event._tag)).toEqual(["compaction.cancelled", "session.statusChanged"]);
+	});
+
+	test("rejects manual compaction while a prompt run is active", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		await fixture.supervisor.sendMessage({
+			requestId: requestIdFromString("request-1"),
+			workspaceId: workspaceIdFromString("workspace-a"),
+			sessionId: sessionIdFromString("session-1"),
+			message: "hello",
+		});
+
+		await expect(
+			fixture.supervisor.compact(
+				workspaceIdFromString("workspace-a"),
+				sessionIdFromString("session-1"),
+				"keep edits",
+			),
+		).rejects.toBeInstanceOf(SessionCompactFailed);
 	});
 
 	test("opening an already-open runtime only refreshes catalog selection", async () => {
@@ -539,8 +749,26 @@ function createSupervisorFixture(
 		openSession: vi.fn(async (request) =>
 			createHandle(request.workspaceId, request.workspacePath, deriveSessionId(request.sessionFilePath)),
 		),
+		cancelCompaction: vi.fn(async () => undefined),
 		cancelRun: vi.fn(async () => undefined),
+		cancelTreeNavigation: vi.fn(async () => undefined),
 		closeSession: vi.fn(async () => undefined),
+		compact: vi.fn(
+			async (handle, customInstructions): Promise<SessionCompactionSnapshot> => ({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				summary: customInstructions ? "Compacted" : "Compacted",
+				firstKeptEntryId: "entry-1",
+				tokensBefore: 1200,
+				timeline: {
+					workspaceId: handle.workspaceId,
+					sessionId: handle.sessionId,
+					entries: [{ id: "entry-1", kind: "user", text: "hello" }],
+				},
+				tree: treeSnapshot(handle.workspaceId, handle.sessionId),
+				cancelled: false,
+			}),
+		),
 		getModelThinking: vi.fn(async (handle) => ({
 			workspaceId: handle.workspaceId,
 			sessionId: handle.sessionId,
@@ -565,6 +793,24 @@ function createSupervisorFixture(
 				entries: [{ id: "entry-1", kind: "user", text: "hello" }],
 			}),
 		),
+		getTree: vi.fn(
+			async (handle): Promise<SessionTreeSnapshot> => treeSnapshot(handle.workspaceId, handle.sessionId),
+		),
+		navigateTree: vi.fn(
+			async (handle): Promise<TreeNavigationSnapshot> => ({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				tree: treeSnapshot(handle.workspaceId, handle.sessionId),
+				timeline: {
+					workspaceId: handle.workspaceId,
+					sessionId: handle.sessionId,
+					entries: [{ id: "entry-1", kind: "user", text: "hello" }],
+				},
+				editorText: "hello",
+				clearsComposer: false,
+				cancelled: false,
+			}),
+		),
 		setModel: vi.fn(async (handle) => ({
 			workspaceId: handle.workspaceId,
 			sessionId: handle.sessionId,
@@ -579,6 +825,10 @@ function createSupervisorFixture(
 			availableThinkingLevels: ["off" as const],
 			models: [],
 		})),
+		setTreeEntryLabel: vi.fn(
+			async (handle, _entryId, label): Promise<SessionTreeSnapshot> =>
+				treeSnapshot(handle.workspaceId, handle.sessionId, label),
+		),
 		sendMessage: vi.fn(
 			async (): Promise<SendRuntimeMessageResult> =>
 				new Promise<SendRuntimeMessageResult>((resolve) => {
@@ -672,12 +922,20 @@ function createHandle(
 		runtime: {
 			session: {
 				abort: vi.fn(async () => undefined),
+				abortBranchSummary: vi.fn(),
+				abortCompaction: vi.fn(),
 				bindExtensions: vi.fn(),
 				clearQueue: vi.fn(() => ({ steering: [], followUp: [] })),
+				compact: vi.fn(async () => ({
+					firstKeptEntryId: "entry-1",
+					summary: "Compacted",
+					tokensBefore: 1200,
+				})),
 				followUpMode: "all",
 				getAvailableThinkingLevels: vi.fn(() => ["off" as const]),
 				getFollowUpMessages: vi.fn(() => []),
 				getSteeringMessages: vi.fn(() => []),
+				navigateTree: vi.fn(async () => ({ editorText: "hello", cancelled: false })),
 				thinkingLevel: "off" as const,
 				setModel: vi.fn(async () => undefined),
 				setThinkingLevel: vi.fn(),
@@ -690,9 +948,41 @@ function createHandle(
 		},
 		sessionFilePath: `/tmp/${workspaceId}/${sessionId}.jsonl`,
 		sessionId,
-		sessionManager: { getEntries: () => [], getSessionId: () => sessionId },
+		sessionManager: {
+			appendLabelChange: () => "label-1",
+			getEntry: () => undefined,
+			getEntries: () => [],
+			getLabel: () => undefined,
+			getLeafId: () => "entry-1",
+			getSessionId: () => sessionId,
+			getTree: () => [],
+		},
 		workspaceId: workspaceIdFromString(workspaceId),
 		workspacePath,
+	};
+}
+
+function treeSnapshot(workspaceId: string, sessionId: string, label?: string): SessionTreeSnapshot {
+	return {
+		workspaceId: workspaceIdFromString(workspaceId),
+		sessionId: sessionIdFromString(sessionId),
+		leafEntryId: "entry-1",
+		updatedAt: "2026-06-20T00:00:00.000Z",
+		entries: [
+			{
+				entryId: "entry-1",
+				parentId: null,
+				childIds: [],
+				depth: 0,
+				kind: "user",
+				textPreview: "hello",
+				...(label ? { label } : {}),
+				isActiveLeaf: true,
+				isActivePath: true,
+				hasChildren: false,
+				searchText: label ? `user hello ${label}` : "user hello",
+			},
+		],
 	};
 }
 

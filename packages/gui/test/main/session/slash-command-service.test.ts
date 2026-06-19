@@ -60,7 +60,10 @@ describe("SlashCommandService", () => {
 			expect.objectContaining({ name: "resume", source: "extension", availability: "conflict" }),
 		);
 		expect(catalog.commands).toContainEqual(
-			expect.objectContaining({ name: "compact", source: "builtin", availability: "deferred" }),
+			expect.objectContaining({ name: "tree", source: "builtin", availability: "guiAction" }),
+		);
+		expect(catalog.commands).toContainEqual(
+			expect.objectContaining({ name: "compact", source: "builtin", availability: "guiAction" }),
 		);
 	});
 

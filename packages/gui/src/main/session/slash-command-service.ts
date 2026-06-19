@@ -13,7 +13,7 @@ export interface SlashCommandServiceOptions {
 	sessionSupervisor: Pick<SessionSupervisor, "getSlashCommands">;
 }
 
-const GUI_ACTION_COMMANDS = new Set(["resume", "new", "settings", "trust", "model", "name"]);
+const GUI_ACTION_COMMANDS = new Set(["resume", "new", "settings", "trust", "model", "name", "tree", "compact"]);
 
 export class SlashCommandService {
 	private readonly now: () => Date;

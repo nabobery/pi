@@ -85,6 +85,16 @@ export function CommandPalette({
 		if (command.name === "name") {
 			store.requestSessionRename(selectedWorkspaceId, selectedSessionId);
 			close();
+			return;
+		}
+		if (command.name === "tree") {
+			close();
+			store.openTreeNavigator(selectedWorkspaceId, selectedSessionId);
+			return;
+		}
+		if (command.name === "compact") {
+			close();
+			store.openCompactDialog(selectedWorkspaceId, selectedSessionId);
 		}
 	}
 
