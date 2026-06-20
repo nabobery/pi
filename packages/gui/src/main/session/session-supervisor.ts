@@ -18,6 +18,9 @@ import {
 	SessionOpenLimitReached,
 	SessionOpened,
 	SessionPromptFailed,
+	ResourceInventoryReadFailed,
+	ResourceReloadFailed,
+	ResourcesInventoryUpdated,
 	SessionRuntimeNotOpen,
 	SessionRuntimeNotFound,
 	SessionRunNotActive,
@@ -37,6 +40,7 @@ import {
 	type ExtensionUiRequestId,
 	type ModelThinkingSnapshot,
 	type QueueSnapshot,
+	type ResourceInventorySnapshot,
 	type QueueRestoreSnapshot,
 	type RequestId,
 	type RunId,
@@ -88,9 +92,12 @@ interface ManagedSessionRecord {
 	handle: RuntimeSessionHandle;
 	lastActivitySequence: number;
 	manualCompactionActive: boolean;
+	manualCompactionCancelling: boolean;
 	needsInput: boolean;
 	queueSnapshot: QueueSnapshot;
 	session: SessionSnapshot;
+	treeNavigationActive: boolean;
+	treeNavigationCancelling: boolean;
 	unsubscribe: () => void;
 }
 
@@ -299,6 +306,8 @@ export class SessionSupervisor {
 			}),
 		);
 		this.setRecordStatus(record, "navigating");
+		record.treeNavigationActive = true;
+		record.treeNavigationCancelling = false;
 		try {
 			const result = await this.driver.navigateTree(record.handle, {
 				targetEntryId: request.targetEntryId,
@@ -311,6 +320,16 @@ export class SessionSupervisor {
 			this.setRecordStatus(record, "ready");
 			return result;
 		} catch (error) {
+			if (record.treeNavigationCancelling) {
+				this.setRecordStatus(record, "ready");
+				throw new SessionTreeNavigationFailed({
+					workspaceId: request.workspaceId,
+					sessionId: request.sessionId,
+					targetEntryId: request.targetEntryId,
+					message: "Tree navigation was cancelled",
+					cause: getErrorMessage(error),
+				});
+			}
 			const guiError =
 				error instanceof SessionTreeNavigationFailed
 					? error
@@ -332,6 +351,9 @@ export class SessionSupervisor {
 			);
 			this.setRecordStatus(record, "ready");
 			throw guiError;
+		} finally {
+			record.treeNavigationActive = false;
+			record.treeNavigationCancelling = false;
 		}
 	}
 
@@ -353,6 +375,7 @@ export class SessionSupervisor {
 		);
 		this.setRecordStatus(record, "compacting");
 		record.manualCompactionActive = true;
+		record.manualCompactionCancelling = false;
 		try {
 			const result = await this.driver.compact(record.handle, customInstructions);
 			this.publishTree(result.tree);
@@ -360,6 +383,15 @@ export class SessionSupervisor {
 			this.setRecordStatus(record, "ready");
 			return result;
 		} catch (error) {
+			if (record.manualCompactionCancelling) {
+				this.setRecordStatus(record, "ready");
+				throw new SessionCompactFailed({
+					workspaceId,
+					sessionId,
+					message: "Manual compaction was cancelled",
+					cause: getErrorMessage(error),
+				});
+			}
 			const guiError =
 				error instanceof SessionCompactFailed
 					? error
@@ -376,24 +408,107 @@ export class SessionSupervisor {
 			throw guiError;
 		} finally {
 			record.manualCompactionActive = false;
+			record.manualCompactionCancelling = false;
 		}
 	}
 
 	async cancelCompaction(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void> {
 		const record = this.getRecord(workspaceId, sessionId);
-		await this.driver.cancelCompaction(record.handle);
+		record.manualCompactionCancelling = true;
+		this.setRecordStatus(record, "cancelling");
+		try {
+			await this.driver.cancelCompaction(record.handle);
+		} catch (error) {
+			record.manualCompactionCancelling = false;
+			this.setRecordStatus(record, record.manualCompactionActive ? "compacting" : "ready");
+			throw new SessionCancelFailed({
+				workspaceId,
+				sessionId,
+				message: "Failed to cancel Pi session compaction",
+				cause: getErrorMessage(error),
+			});
+		}
 		this.eventBus.publish(new CompactionCancelled({ ...this.eventBus.nextEventBase(), workspaceId, sessionId }));
 		this.setRecordStatus(record, "ready");
 	}
 
 	async cancelTreeNavigation(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void> {
-		await this.driver.cancelTreeNavigation(this.getRecord(workspaceId, sessionId).handle);
+		const record = this.getRecord(workspaceId, sessionId);
+		record.treeNavigationCancelling = true;
+		this.setRecordStatus(record, "cancelling");
+		try {
+			await this.driver.cancelTreeNavigation(record.handle);
+		} catch (error) {
+			record.treeNavigationCancelling = false;
+			this.setRecordStatus(record, record.treeNavigationActive ? "navigating" : "ready");
+			throw new SessionCancelFailed({
+				workspaceId,
+				sessionId,
+				message: "Failed to cancel Pi session tree navigation",
+				cause: getErrorMessage(error),
+			});
+		}
 	}
 
 	async getSlashCommands(workspaceId: WorkspaceId, sessionId: SessionId): Promise<SlashCommandSnapshot[]> {
 		const getSlashCommands = this.driver.getSlashCommands;
 		if (!getSlashCommands) return [];
 		return getSlashCommands(this.getRecord(workspaceId, sessionId).handle);
+	}
+
+	async getResourceInventory(workspaceId: WorkspaceId, sessionId: SessionId): Promise<ResourceInventorySnapshot> {
+		const getResourceInventory = this.driver.getResourceInventory;
+		if (!getResourceInventory) {
+			throw new ResourceInventoryReadFailed({
+				workspaceId,
+				sessionId,
+				message: "Pi GUI session driver does not expose resource inventory",
+			});
+		}
+		const inventory = await getResourceInventory(this.getRecord(workspaceId, sessionId).handle);
+		this.publishResourceInventory(inventory);
+		return inventory;
+	}
+
+	async reloadResources(workspaceId: WorkspaceId, sessionId: SessionId): Promise<ResourceInventorySnapshot> {
+		const reloadResources = this.driver.reloadResources;
+		if (!reloadResources) {
+			throw new ResourceReloadFailed({
+				workspaceId,
+				sessionId,
+				message: "Pi GUI session driver does not expose resource reload",
+			});
+		}
+		const record = this.getRecord(workspaceId, sessionId);
+		if (record.activeRunId || record.manualCompactionActive || record.treeNavigationActive) {
+			throw new ResourceReloadFailed({
+				workspaceId,
+				sessionId,
+				message: "Resource reload is unavailable while the Pi session is busy",
+			});
+		}
+		this.setRecordStatus(record, "replacing");
+		try {
+			const inventory = await reloadResources(record.handle);
+			this.publishResourceInventory(inventory);
+			this.publishModelThinking(await this.driver.getModelThinking(record.handle));
+			this.setRecordStatus(record, "ready");
+			return inventory;
+		} catch (error) {
+			this.setRecordStatus(record, "ready");
+			if (error instanceof ResourceReloadFailed) throw error;
+			throw new ResourceReloadFailed({
+				workspaceId,
+				sessionId,
+				message: "Failed to reload Pi session resources",
+				cause: getErrorMessage(error),
+			});
+		}
+	}
+
+	async reloadWorkspaceResources(workspaceId: WorkspaceId): Promise<ResourceInventorySnapshot[]> {
+		const records = Array.from(this.records.values()).filter((record) => record.handle.workspaceId === workspaceId);
+		return Promise.all(records.map((record) => this.reloadResources(workspaceId, record.handle.sessionId)));
 	}
 
 	async restoreQueuedMessages(workspaceId: WorkspaceId, sessionId: SessionId): Promise<QueueRestoreSnapshot> {
@@ -512,9 +627,12 @@ export class SessionSupervisor {
 				handle,
 				lastActivitySequence: 0,
 				manualCompactionActive: false,
+				manualCompactionCancelling: false,
 				needsInput: false,
 				queueSnapshot,
 				session: readySession,
+				treeNavigationActive: false,
+				treeNavigationCancelling: false,
 				unsubscribe,
 			});
 			this.eventBus.publish(new SessionOpened({ ...this.eventBus.nextEventBase(), session: readySession }));
@@ -573,6 +691,10 @@ export class SessionSupervisor {
 
 	private publishTree(tree: SessionTreeSnapshot): void {
 		this.eventBus.publish(new TreeUpdated({ ...this.eventBus.nextEventBase(), tree }));
+	}
+
+	private publishResourceInventory(inventory: ResourceInventorySnapshot): void {
+		this.eventBus.publish(new ResourcesInventoryUpdated({ ...this.eventBus.nextEventBase(), inventory }));
 	}
 
 	private async completeRuntimeCompaction(

@@ -183,11 +183,13 @@ function QueueGroup({ messages, title }: { messages: QueueSnapshot["steeringMess
 }
 
 export function SettingsTrustPanel({
+	selectedSessionId,
 	selectedWorkspaceId,
 	settingsSummary,
 	store,
 	trustStatus,
 }: {
+	selectedSessionId: SessionId | undefined;
 	selectedWorkspaceId: WorkspaceId | undefined;
 	settingsSummary: CatalogState["settingsSummaryByWorkspaceId"][string] | undefined;
 	store: GuiCatalogStore;
@@ -216,6 +218,24 @@ export function SettingsTrustPanel({
 				</div>
 			</dl>
 			<div className="button-group button-group--wrap">
+				<button
+					type="button"
+					onClick={() => void store.openControlPlane("settings", selectedWorkspaceId, selectedSessionId)}
+				>
+					Settings
+				</button>
+				<button
+					type="button"
+					onClick={() => void store.openControlPlane("trust", selectedWorkspaceId, selectedSessionId)}
+				>
+					Trust
+				</button>
+				<button
+					type="button"
+					onClick={() => void store.openControlPlane("resources", selectedWorkspaceId, selectedSessionId)}
+				>
+					Resources
+				</button>
 				<button type="button" onClick={() => void store.openSettingsFile(selectedWorkspaceId, "global")}>
 					Open global
 				</button>

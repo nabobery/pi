@@ -28,6 +28,8 @@ export interface TreeNavigatorState {
 	selectedEntryId: string | undefined;
 	foldedEntryIds: readonly string[];
 	loading: boolean;
+	navigationCancelling: boolean;
+	navigationPending: boolean;
 	error: string | undefined;
 }
 
@@ -99,6 +101,10 @@ export function createTreeAndCompactionStoreActions(
 			}));
 		},
 		cancelTreeNavigation: async (workspaceId, sessionId) => {
+			context.updateState((current) => ({
+				...current,
+				treeNavigator: { ...current.treeNavigator, navigationCancelling: true, error: undefined },
+			}));
 			const result = await context.api.invoke(
 				new SessionCancelTreeNavigation({
 					requestId: context.nextRequestId("session.cancelTreeNavigation"),
@@ -109,9 +115,18 @@ export function createTreeAndCompactionStoreActions(
 			if (!result.ok) {
 				context.updateState((current) => ({
 					...current,
-					treeNavigator: { ...current.treeNavigator, error: result.error.message },
+					treeNavigator: {
+						...current.treeNavigator,
+						navigationCancelling: false,
+						error: result.error.message,
+					},
 				}));
+				return;
 			}
+			context.updateState((current) => ({
+				...current,
+				treeNavigator: { ...current.treeNavigator, navigationPending: false, navigationCancelling: false },
+			}));
 		},
 		closeCompactDialog: () => {
 			context.updateState((current) => ({
@@ -122,7 +137,9 @@ export function createTreeAndCompactionStoreActions(
 		closeTreeNavigator: () => {
 			context.updateState((current) => ({
 				...current,
-				treeNavigator: { ...current.treeNavigator, open: false, error: undefined },
+				treeNavigator: current.treeNavigator.navigationPending
+					? current.treeNavigator
+					: { ...current.treeNavigator, open: false, error: undefined },
 			}));
 		},
 		compactSession: async (workspaceId, sessionId, customInstructions) => {
@@ -202,6 +219,15 @@ export function createTreeAndCompactionStoreActions(
 			}));
 		},
 		navigateTree: async (request) => {
+			context.updateState((current) => ({
+				...current,
+				treeNavigator: {
+					...current.treeNavigator,
+					navigationPending: true,
+					navigationCancelling: false,
+					error: undefined,
+				},
+			}));
 			const result = await context.api.invoke(
 				new SessionNavigateTree({
 					requestId: context.nextRequestId("session.navigateTree"),
@@ -215,7 +241,12 @@ export function createTreeAndCompactionStoreActions(
 			if (!result.ok) {
 				context.updateState((current) => ({
 					...current,
-					treeNavigator: { ...current.treeNavigator, error: result.error.message },
+					treeNavigator: {
+						...current.treeNavigator,
+						navigationPending: false,
+						navigationCancelling: false,
+						error: result.error.message,
+					},
 				}));
 				return;
 			}
@@ -331,6 +362,8 @@ export function emptyTreeNavigatorState(): TreeNavigatorState {
 		selectedEntryId: undefined,
 		foldedEntryIds: [],
 		loading: false,
+		navigationCancelling: false,
+		navigationPending: false,
 		error: undefined,
 	};
 }
@@ -385,7 +418,13 @@ export function applyNavigationResult(
 		...updateTreeState(state, snapshot.tree),
 		timelines: { ...state.timelines, [key]: snapshot.timeline },
 		composerDrafts: { ...state.composerDrafts, [key]: snapshot.clearsComposer ? "" : draft },
-		treeNavigator: { ...state.treeNavigator, open: false, error: undefined },
+		treeNavigator: {
+			...state.treeNavigator,
+			open: snapshot.cancelled ? state.treeNavigator.open : false,
+			navigationPending: false,
+			navigationCancelling: false,
+			error: undefined,
+		},
 	};
 }
 

@@ -330,6 +330,27 @@ export class SettingsSummaryReadFailed extends Schema.TaggedError<SettingsSummar
 	},
 ) {}
 
+export class SettingsEditorReadFailed extends Schema.TaggedError<SettingsEditorReadFailed>()(
+	"SettingsEditorReadFailed",
+	{
+		workspaceId: Schema.String,
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
+
+export class SettingsUpdateInvalid extends Schema.TaggedError<SettingsUpdateInvalid>()("SettingsUpdateInvalid", {
+	workspaceId: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class SettingsUpdateFailed extends Schema.TaggedError<SettingsUpdateFailed>()("SettingsUpdateFailed", {
+	workspaceId: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
 export class SettingsFileUnavailable extends Schema.TaggedError<SettingsFileUnavailable>()("SettingsFileUnavailable", {
 	workspaceId: Schema.String,
 	scope: Schema.Literal("global", "project"),
@@ -350,6 +371,56 @@ export class TrustStatusReadFailed extends Schema.TaggedError<TrustStatusReadFai
 	message: Schema.String,
 	cause: Schema.optional(Schema.String),
 }) {}
+
+export class TrustDecisionInvalid extends Schema.TaggedError<TrustDecisionInvalid>()("TrustDecisionInvalid", {
+	workspaceId: Schema.String,
+	optionId: Schema.String,
+	message: Schema.String,
+}) {}
+
+export class TrustDecisionSaveFailed extends Schema.TaggedError<TrustDecisionSaveFailed>()("TrustDecisionSaveFailed", {
+	workspaceId: Schema.String,
+	optionId: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class ResourceInventoryReadFailed extends Schema.TaggedError<ResourceInventoryReadFailed>()(
+	"ResourceInventoryReadFailed",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.optional(Schema.String),
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
+
+export class ResourceReloadFailed extends Schema.TaggedError<ResourceReloadFailed>()("ResourceReloadFailed", {
+	workspaceId: Schema.String,
+	sessionId: Schema.optional(Schema.String),
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class ResourceSourceUnavailable extends Schema.TaggedError<ResourceSourceUnavailable>()(
+	"ResourceSourceUnavailable",
+	{
+		workspaceId: Schema.String,
+		resourceId: Schema.String,
+		message: Schema.String,
+	},
+) {}
+
+export class ResourceSourceOpenFailed extends Schema.TaggedError<ResourceSourceOpenFailed>()(
+	"ResourceSourceOpenFailed",
+	{
+		workspaceId: Schema.String,
+		resourceId: Schema.String,
+		path: Schema.String,
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
 
 export class ExtensionUiRequestNotFound extends Schema.TaggedError<ExtensionUiRequestNotFound>()(
 	"ExtensionUiRequestNotFound",
@@ -436,9 +507,18 @@ export const GuiError = Schema.Union(
 	SessionModelSetFailed,
 	SessionThinkingSetFailed,
 	SettingsSummaryReadFailed,
+	SettingsEditorReadFailed,
+	SettingsUpdateInvalid,
+	SettingsUpdateFailed,
 	SettingsFileUnavailable,
 	SettingsFileOpenFailed,
 	TrustStatusReadFailed,
+	TrustDecisionInvalid,
+	TrustDecisionSaveFailed,
+	ResourceInventoryReadFailed,
+	ResourceReloadFailed,
+	ResourceSourceUnavailable,
+	ResourceSourceOpenFailed,
 	ExtensionUiRequestNotFound,
 	ExtensionUiSessionMismatch,
 	ExtensionUiResponseInvalid,

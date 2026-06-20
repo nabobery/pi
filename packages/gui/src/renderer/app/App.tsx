@@ -16,6 +16,7 @@ import {
 import { loadBootstrapState, type LoadState } from "./bootstrap-loader.ts";
 import { MainPane, SessionSection, WorkspaceSection } from "./catalog-view.tsx";
 import { CommandPalette, ResumePicker } from "./command-palette.tsx";
+import { ControlPlaneDialog } from "./control-plane.tsx";
 import { CompactDialog, TreeNavigator } from "./tree-navigator.tsx";
 
 export function App() {
@@ -150,6 +151,7 @@ export function ReadyApp({
 				<SettingsTrustPanel
 					store={store}
 					selectedWorkspaceId={selectedWorkspace?.id}
+					selectedSessionId={selectedSession?.id}
 					settingsSummary={settingsSummary}
 					trustStatus={trustStatus}
 				/>
@@ -212,6 +214,12 @@ export function ReadyApp({
 					store={store}
 				/>
 				<CompactDialog state={state} store={store} />
+				<ControlPlaneDialog
+					selectedSessionId={selectedSession?.id}
+					selectedWorkspaceId={selectedWorkspace?.id}
+					state={state}
+					store={store}
+				/>
 				{selectedWorkspace && selectedSession && extensionUi ? (
 					<ExtensionUiLayer
 						draft={draft}

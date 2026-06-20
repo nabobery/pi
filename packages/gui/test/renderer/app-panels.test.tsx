@@ -120,6 +120,7 @@ describe("renderer app panels", () => {
 		const store = storeStub();
 		const mounted = renderPanel(
 			<SettingsTrustPanel
+				selectedSessionId={sessionId}
 				selectedWorkspaceId={workspaceId}
 				settingsSummary={{
 					workspaceId,
@@ -186,6 +187,7 @@ describe("renderer app panels", () => {
 	test("settings panel renders nothing without a selected workspace", () => {
 		const mounted = renderPanel(
 			<SettingsTrustPanel
+				selectedSessionId={undefined}
 				selectedWorkspaceId={undefined}
 				settingsSummary={undefined}
 				store={storeStub()}
@@ -497,12 +499,15 @@ function storeStub(): GuiCatalogStore {
 		cancelRun: vi.fn().mockResolvedValue(undefined),
 		closeCommandPalette: vi.fn(),
 		closeCompactDialog: vi.fn(),
+		closeControlPlane: vi.fn(),
 		closeResumePicker: vi.fn(),
 		closeSession: vi.fn().mockResolvedValue(undefined),
 		closeTreeNavigator: vi.fn(),
 		compactSession: vi.fn().mockResolvedValue(undefined),
 		createSession: vi.fn().mockResolvedValue(undefined),
 		getSlashCommands: vi.fn().mockResolvedValue(undefined),
+		getResourceInventory: vi.fn().mockResolvedValue(undefined),
+		getSettingsEditor: vi.fn().mockResolvedValue(undefined),
 		getSettingsSummary: vi.fn().mockResolvedValue(undefined),
 		getSnapshot: vi.fn(),
 		getTree: vi.fn().mockResolvedValue(undefined),
@@ -510,6 +515,7 @@ function storeStub(): GuiCatalogStore {
 		getTrustStatus: vi.fn().mockResolvedValue(undefined),
 		openCommandPalette: vi.fn(),
 		openCompactDialog: vi.fn(),
+		openControlPlane: vi.fn().mockResolvedValue(undefined),
 		openResumePicker: vi.fn().mockResolvedValue(undefined),
 		openSession: vi.fn().mockResolvedValue(undefined),
 		openSettingsFile: vi.fn().mockResolvedValue(undefined),
@@ -520,7 +526,10 @@ function storeStub(): GuiCatalogStore {
 		renameResumeSession: vi.fn().mockResolvedValue(undefined),
 		requestSessionRename: vi.fn(),
 		respondToExtensionUi: vi.fn().mockResolvedValue(undefined),
+		openResourceSource: vi.fn().mockResolvedValue(undefined),
 		revealSettingsFile: vi.fn().mockResolvedValue(undefined),
+		reloadResources: vi.fn().mockResolvedValue(undefined),
+		revealResourceSource: vi.fn().mockResolvedValue(undefined),
 		resumeArchiveSession: vi.fn().mockResolvedValue(undefined),
 		resumeOpenSession: vi.fn().mockResolvedValue(undefined),
 		resumeUnarchiveSession: vi.fn().mockResolvedValue(undefined),
@@ -536,6 +545,8 @@ function storeStub(): GuiCatalogStore {
 		setResumePickerSelectedIndex: vi.fn(),
 		setResumePickerShowPaths: vi.fn(),
 		setThinkingLevel: vi.fn().mockResolvedValue(undefined),
+		saveTrustDecision: vi.fn().mockResolvedValue(undefined),
+		updateCommonSettings: vi.fn().mockResolvedValue(undefined),
 		setTreeEntryLabel: vi.fn().mockResolvedValue(undefined),
 		setTreeNavigatorFilterMode: vi.fn(),
 		setTreeNavigatorQuery: vi.fn(),

@@ -50,8 +50,13 @@ export function TreeNavigator({
 	if (!state.treeNavigator.open || !activeWorkspaceId || !activeSessionId) return null;
 	const workspaceId = activeWorkspaceId;
 	const sessionId = activeSessionId;
+	const navigationBusy = state.treeNavigator.navigationPending || state.treeNavigator.navigationCancelling;
 
 	function close(): void {
+		if (state.treeNavigator.navigationPending) {
+			void store.cancelTreeNavigation(workspaceId, sessionId);
+			return;
+		}
 		store.closeTreeNavigator();
 	}
 
@@ -61,7 +66,7 @@ export function TreeNavigator({
 	}
 
 	function navigateSelected(): void {
-		if (!selectedEntry) return;
+		if (!selectedEntry || navigationBusy) return;
 		if (draft.trim() && !globalThis.confirm("Replace or clear the current composer draft?")) return;
 		void store.navigateTree({
 			workspaceId,
@@ -120,6 +125,11 @@ export function TreeNavigator({
 		if (event.key === "Enter") {
 			event.preventDefault();
 			navigateSelected();
+			return;
+		}
+		if (event.key === "Escape" && state.treeNavigator.navigationPending) {
+			event.preventDefault();
+			void store.cancelTreeNavigation(workspaceId, sessionId);
 		}
 	}
 
@@ -135,8 +145,8 @@ export function TreeNavigator({
 					<p className="eyebrow">Tree</p>
 					<h3 id="tree-navigator-title">Session tree</h3>
 				</div>
-				<button type="button" onClick={close}>
-					Close
+				<button type="button" disabled={state.treeNavigator.navigationCancelling} onClick={close}>
+					{state.treeNavigator.navigationPending ? "Cancel" : "Close"}
 				</button>
 			</div>
 			<input
@@ -162,6 +172,11 @@ export function TreeNavigator({
 				) : null}
 			</div>
 			{state.treeNavigator.error ? <p className="inline-error">{state.treeNavigator.error}</p> : null}
+			{navigationBusy ? (
+				<p className="inline-status">
+					{state.treeNavigator.navigationCancelling ? "Cancelling navigation." : "Navigating tree."}
+				</p>
+			) : null}
 			<div id="tree-navigator-list" className="command-list command-list--tall tree-list" role="tree">
 				{state.treeNavigator.loading ? <p className="empty-copy">Loading tree.</p> : null}
 				{!state.treeNavigator.loading && visibleEntries.length === 0 ? (
@@ -197,7 +212,7 @@ export function TreeNavigator({
 				/>
 				<button
 					type="button"
-					disabled={!selectedEntry}
+					disabled={!selectedEntry || navigationBusy}
 					onClick={() => {
 						if (!selectedEntry) return;
 						void store.setTreeEntryLabel(workspaceId, sessionId, selectedEntry.entryId, labelDraft);
@@ -205,8 +220,8 @@ export function TreeNavigator({
 				>
 					Label
 				</button>
-				<button type="button" disabled={!selectedEntry} onClick={navigateSelected}>
-					Go
+				<button type="button" disabled={!selectedEntry || navigationBusy} onClick={navigateSelected}>
+					{state.treeNavigator.navigationPending ? "Navigating" : "Go"}
 				</button>
 			</div>
 		</ModalDialog>

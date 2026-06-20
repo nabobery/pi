@@ -9,6 +9,7 @@ import {
 	type GuiCommandResult,
 	type GuiError,
 	type GuiEvent,
+	type ResourceInventorySnapshot,
 	InvalidRendererCommand,
 	InternalIpcError,
 	ReceiptEmitted,
@@ -17,12 +18,20 @@ import {
 	ResumeRename,
 	ResumeSearch,
 	ResumeUnarchive,
+	ResourcesGetInventory,
+	ResourcesInventoryUpdated,
+	ResourcesOpenSource,
+	ResourcesReload,
+	ResourcesRevealSource,
+	SettingsEditorUpdated,
+	SettingsGetEditorSnapshot,
 	SettingsGetSummary,
 	SettingsOpenGlobalFile,
 	SettingsOpenProjectFile,
 	SettingsRevealGlobalFile,
 	SettingsRevealProjectFile,
 	SettingsSummaryUpdated,
+	SettingsUpdateCommon,
 	SessionCompact,
 	SessionArchive,
 	SessionCancelCompaction,
@@ -45,10 +54,12 @@ import {
 	SessionSelected,
 	SessionUnarchive,
 	TrustGetStatus,
+	TrustSaveDecision,
 	TrustStatusUpdated,
 	UnauthorizedIpcSender,
 	WorkspaceAdd,
 	WorkspaceCatalogUpdated,
+	type WorkspaceId,
 	WorkspacePickDirectory,
 	WorkspaceRemove,
 	WorkspaceSelect,
@@ -64,6 +75,7 @@ import type { AppOriginPolicy } from "./app-origin-policy.ts";
 import { createAppInfo } from "./app-info.ts";
 import { isAllowedAppUrl } from "./app-origin-policy.ts";
 import { CatalogService } from "./catalog/catalog-service.ts";
+import { ResourceBridgeService } from "./resources/resource-bridge-service.ts";
 import { SettingsBridgeService } from "./settings/settings-bridge-service.ts";
 import { ExtensionHostUiService } from "./session/extension-host-ui-service.ts";
 import { FakeSessionDriver, shouldUseFakeSessionDriver } from "./session/fake-session-driver.ts";
@@ -88,8 +100,15 @@ export interface CreateGuiInvokeHandlerOptions {
 	policy: AppOriginPolicy;
 	settingsBridgeService?: Pick<
 		SettingsBridgeService,
-		"getSummary" | "getTrustStatus" | "openSettingsFile" | "revealSettingsFile"
+		| "getEditorSnapshot"
+		| "getSummary"
+		| "getTrustStatus"
+		| "openSettingsFile"
+		| "revealSettingsFile"
+		| "saveTrustDecision"
+		| "updateCommonSettings"
 	>;
+	resourceBridgeService?: Pick<ResourceBridgeService, "getInventory" | "openSource" | "reload" | "revealSource">;
 	resumeService?: Pick<ResumeService, "archive" | "open" | "rename" | "search" | "unarchive">;
 	sessionSupervisor?: Pick<
 		SessionSupervisor,
@@ -109,7 +128,15 @@ export interface CreateGuiInvokeHandlerOptions {
 		Partial<
 			Pick<
 				SessionSupervisor,
-				"cancelCompaction" | "cancelTreeNavigation" | "compact" | "getTree" | "navigateTree" | "setTreeEntryLabel"
+				| "cancelCompaction"
+				| "cancelTreeNavigation"
+				| "compact"
+				| "getResourceInventory"
+				| "getTree"
+				| "navigateTree"
+				| "reloadResources"
+				| "reloadWorkspaceResources"
+				| "setTreeEntryLabel"
 			>
 		>;
 	slashCommandService?: Pick<SlashCommandService, "getCatalog">;
@@ -190,6 +217,11 @@ export function registerGuiIpcHandlers(app: App, mode: string | undefined, polic
 		eventBus,
 		extensionHostUiService,
 	});
+	const resourceBridgeService = new ResourceBridgeService({
+		catalogService,
+		sessionSupervisor,
+		shell,
+	});
 	const resumeService = new ResumeService({ catalogService, sessionSupervisor });
 	const slashCommandService = new SlashCommandService({ sessionSupervisor });
 	const handler = createGuiInvokeHandler({
@@ -203,6 +235,7 @@ export function registerGuiIpcHandlers(app: App, mode: string | undefined, polic
 		},
 		policy,
 		resumeService,
+		resourceBridgeService,
 		settingsBridgeService,
 		slashCommandService,
 		sessionSupervisor,
@@ -230,6 +263,7 @@ async function handleGuiCommand(
 ): Promise<GuiCommandResult> {
 	const catalogService = options.catalogService ?? new CatalogService();
 	const settingsBridgeService = options.settingsBridgeService ?? new SettingsBridgeService({ catalogService, shell });
+	const resourceBridgeService = options.resourceBridgeService ?? new ResourceBridgeService({ catalogService, shell });
 
 	if (command instanceof AppBootstrap) {
 		options.eventBus.publishReceipt(command.requestId, "app.bootstrap.accepted");
@@ -497,6 +531,22 @@ async function handleGuiCommand(
 			return { ok: true, requestId: command.requestId, data: summary };
 		}
 
+		if (command instanceof SettingsGetEditorSnapshot) {
+			const editor = await settingsBridgeService.getEditorSnapshot(command.workspaceId);
+			options.eventBus.publish(new SettingsEditorUpdated({ ...options.eventBus.nextEventBase(), editor }));
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: editor };
+		}
+
+		if (command instanceof SettingsUpdateCommon) {
+			const editor = await settingsBridgeService.updateCommonSettings(command.workspaceId, command.patch);
+			const summary = await settingsBridgeService.getSummary(command.workspaceId);
+			options.eventBus.publish(new SettingsSummaryUpdated({ ...options.eventBus.nextEventBase(), summary }));
+			options.eventBus.publish(new SettingsEditorUpdated({ ...options.eventBus.nextEventBase(), editor }));
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: editor };
+		}
+
 		if (command instanceof SettingsOpenGlobalFile) {
 			await settingsBridgeService.openSettingsFile(command.workspaceId, "global");
 			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
@@ -526,6 +576,56 @@ async function handleGuiCommand(
 			options.eventBus.publish(new TrustStatusUpdated({ ...options.eventBus.nextEventBase(), status }));
 			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
 			return { ok: true, requestId: command.requestId, data: status };
+		}
+
+		if (command instanceof TrustSaveDecision) {
+			const status = await settingsBridgeService.saveTrustDecision(command.workspaceId, command.optionId);
+			const summary = await settingsBridgeService.getSummary(command.workspaceId);
+			const editor = await settingsBridgeService.getEditorSnapshot(command.workspaceId);
+			const inventoryResult = await reloadResourcesAfterTrustSave(resourceBridgeService, command.workspaceId);
+			options.eventBus.publish(new TrustStatusUpdated({ ...options.eventBus.nextEventBase(), status }));
+			options.eventBus.publish(new SettingsSummaryUpdated({ ...options.eventBus.nextEventBase(), summary }));
+			options.eventBus.publish(new SettingsEditorUpdated({ ...options.eventBus.nextEventBase(), editor }));
+			if (inventoryResult.ok) {
+				options.eventBus.publish(
+					new ResourcesInventoryUpdated({
+						...options.eventBus.nextEventBase(),
+						inventory: inventoryResult.inventory,
+					}),
+				);
+			} else {
+				options.eventBus.publish(
+					new AppError({ ...options.eventBus.nextEventBase(), error: await toGuiError(inventoryResult.error) }),
+				);
+			}
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: status };
+		}
+
+		if (command instanceof ResourcesGetInventory) {
+			const inventory = await resourceBridgeService.getInventory(command.workspaceId, command.sessionId);
+			options.eventBus.publish(new ResourcesInventoryUpdated({ ...options.eventBus.nextEventBase(), inventory }));
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: inventory };
+		}
+
+		if (command instanceof ResourcesReload) {
+			const inventory = await resourceBridgeService.reload(command.workspaceId, command.sessionId);
+			options.eventBus.publish(new ResourcesInventoryUpdated({ ...options.eventBus.nextEventBase(), inventory }));
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: inventory };
+		}
+
+		if (command instanceof ResourcesOpenSource) {
+			await resourceBridgeService.openSource(command.workspaceId, command.resourceId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
+		if (command instanceof ResourcesRevealSource) {
+			await resourceBridgeService.revealSource(command.workspaceId, command.resourceId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
 		}
 
 		if (command instanceof SessionRename) {
@@ -667,7 +767,7 @@ async function publishCurrentWorkspaceCatalog(
 
 async function publishWorkspaceRuntimeContext(
 	eventBus: RendererEventBus,
-	settingsBridgeService: Pick<SettingsBridgeService, "getSummary" | "getTrustStatus">,
+	settingsBridgeService: Pick<SettingsBridgeService, "getEditorSnapshot" | "getSummary" | "getTrustStatus">,
 	workspaceId: ConstructorParameters<typeof SettingsSummaryUpdated>[0]["summary"]["workspaceId"],
 ): Promise<void> {
 	try {
@@ -675,6 +775,12 @@ async function publishWorkspaceRuntimeContext(
 			new SettingsSummaryUpdated({
 				...eventBus.nextEventBase(),
 				summary: await settingsBridgeService.getSummary(workspaceId),
+			}),
+		);
+		eventBus.publish(
+			new SettingsEditorUpdated({
+				...eventBus.nextEventBase(),
+				editor: await settingsBridgeService.getEditorSnapshot(workspaceId),
 			}),
 		);
 		eventBus.publish(
@@ -690,6 +796,17 @@ async function publishWorkspaceRuntimeContext(
 				error: await toGuiError(error),
 			}),
 		);
+	}
+}
+
+async function reloadResourcesAfterTrustSave(
+	resourceBridgeService: Pick<ResourceBridgeService, "reload">,
+	workspaceId: WorkspaceId,
+): Promise<{ ok: true; inventory: ResourceInventorySnapshot } | { ok: false; error: unknown }> {
+	try {
+		return { ok: true, inventory: await resourceBridgeService.reload(workspaceId, undefined) };
+	} catch (error) {
+		return { ok: false, error };
 	}
 }
 

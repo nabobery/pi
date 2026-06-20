@@ -41,7 +41,7 @@ export interface ResumePickerState {
 	result: ResumeSearchSnapshot | undefined;
 }
 
-export type Phase9StoreActions = Pick<
+export type CommandPaletteStoreActions = Pick<
 	GuiCatalogStore,
 	| "closeCommandPalette"
 	| "closeResumePicker"
@@ -60,7 +60,7 @@ export type Phase9StoreActions = Pick<
 	| "setResumePickerShowPaths"
 >;
 
-export interface Phase9StoreContext {
+export interface CommandPaletteStoreContext {
 	api: RendererCatalogApi;
 	getState(): CatalogViewState;
 	invoke(command: GuiCommand): Promise<boolean>;
@@ -68,7 +68,7 @@ export interface Phase9StoreContext {
 	updateState(update: (current: CatalogViewState) => CatalogViewState): void;
 }
 
-export function createPhase9StoreActions(context: Phase9StoreContext): Phase9StoreActions {
+export function createCommandPaletteStoreActions(context: CommandPaletteStoreContext): CommandPaletteStoreActions {
 	let slashCatalogSequence = 0;
 	let resumeSearchSequence = 0;
 

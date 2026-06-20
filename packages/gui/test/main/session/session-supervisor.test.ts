@@ -210,6 +210,164 @@ describe("SessionSupervisor", () => {
 		]);
 	});
 
+	test("manual compaction cancellation emits only cancelled when the driver rejects after abort", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		let rejectCompaction: ((error: unknown) => void) | undefined;
+		fixture.driver.compact = vi.fn(
+			async () =>
+				new Promise<SessionCompactionSnapshot>((_resolve, reject) => {
+					rejectCompaction = reject;
+				}),
+		);
+		fixture.events.length = 0;
+
+		const compactPromise = fixture.supervisor.compact(
+			workspaceIdFromString("workspace-a"),
+			sessionIdFromString("session-1"),
+			"keep file edits",
+		);
+		await waitForEvent(fixture.events, "compaction.started");
+		await fixture.supervisor.cancelCompaction(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		rejectCompaction?.(new Error("aborted"));
+
+		await expect(compactPromise).rejects.toBeInstanceOf(SessionCompactFailed);
+		expect(fixture.events.filter((event) => event._tag === "compaction.cancelled")).toHaveLength(1);
+		expect(fixture.events.map((event) => event._tag)).not.toContain("compaction.failed");
+	});
+
+	test("failed manual compaction cancellation restores failure handling", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		let rejectCompaction: ((error: unknown) => void) | undefined;
+		fixture.driver.compact = vi.fn(
+			async () =>
+				new Promise<SessionCompactionSnapshot>((_resolve, reject) => {
+					rejectCompaction = reject;
+				}),
+		);
+		fixture.driver.cancelCompaction = vi.fn(async () => {
+			throw new Error("abort failed");
+		});
+		fixture.events.length = 0;
+
+		const compactPromise = fixture.supervisor.compact(
+			workspaceIdFromString("workspace-a"),
+			sessionIdFromString("session-1"),
+			"keep file edits",
+		);
+		await waitForEvent(fixture.events, "compaction.started");
+		await expect(
+			fixture.supervisor.cancelCompaction(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1")),
+		).rejects.toMatchObject({
+			_tag: "SessionCancelFailed",
+			cause: "abort failed",
+		} satisfies Partial<SessionCancelFailed>);
+		rejectCompaction?.(new Error("provider failed"));
+
+		await expect(compactPromise).rejects.toBeInstanceOf(SessionCompactFailed);
+		expect(fixture.events.map((event) => event._tag)).toContain("compaction.failed");
+		expect(fixture.events.map((event) => event._tag)).not.toContain("compaction.cancelled");
+		expect(fixture.events.at(-1)).toMatchObject({ _tag: "session.statusChanged", session: { status: "ready" } });
+	});
+
+	test("tree navigation cancellation publishes cancelling and ready status without failure", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		let resolveNavigation: ((snapshot: TreeNavigationSnapshot) => void) | undefined;
+		fixture.driver.navigateTree = vi.fn(
+			async (handle) =>
+				new Promise<TreeNavigationSnapshot>((resolve) => {
+					resolveNavigation = () =>
+						resolve({
+							workspaceId: handle.workspaceId,
+							sessionId: handle.sessionId,
+							tree: treeSnapshot(handle.workspaceId, handle.sessionId),
+							timeline: { workspaceId: handle.workspaceId, sessionId: handle.sessionId, entries: [] },
+							editorText: undefined,
+							clearsComposer: false,
+							cancelled: true,
+						});
+				}),
+		);
+		fixture.events.length = 0;
+
+		const navigationPromise = fixture.supervisor.navigateTree({
+			workspaceId: workspaceIdFromString("workspace-a"),
+			sessionId: sessionIdFromString("session-1"),
+			targetEntryId: "entry-1",
+			summaryMode: "default",
+		});
+		await waitForEvent(fixture.events, "tree.navigationStarted");
+		await fixture.supervisor.cancelTreeNavigation(
+			workspaceIdFromString("workspace-a"),
+			sessionIdFromString("session-1"),
+		);
+		resolveNavigation?.({
+			workspaceId: workspaceIdFromString("workspace-a"),
+			sessionId: sessionIdFromString("session-1"),
+			tree: treeSnapshot("workspace-a", "session-1"),
+			timeline: {
+				workspaceId: workspaceIdFromString("workspace-a"),
+				sessionId: sessionIdFromString("session-1"),
+				entries: [],
+			},
+			editorText: undefined,
+			clearsComposer: false,
+			cancelled: true,
+		});
+		await navigationPromise;
+
+		expect(fixture.driver.cancelTreeNavigation).toHaveBeenCalledTimes(1);
+		expect(fixture.events.map((event) => event._tag)).toEqual([
+			"tree.navigationStarted",
+			"session.statusChanged",
+			"session.statusChanged",
+			"tree.updated",
+			"tree.navigationCompleted",
+			"session.statusChanged",
+		]);
+		expect(fixture.events[2]).toMatchObject({ _tag: "session.statusChanged", session: { status: "cancelling" } });
+	});
+
+	test("failed tree navigation cancellation restores failure handling", async () => {
+		const fixture = createSupervisorFixture();
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		let rejectNavigation: ((error: unknown) => void) | undefined;
+		fixture.driver.navigateTree = vi.fn(
+			async () =>
+				new Promise<TreeNavigationSnapshot>((_resolve, reject) => {
+					rejectNavigation = reject;
+				}),
+		);
+		fixture.driver.cancelTreeNavigation = vi.fn(async () => {
+			throw new Error("abort failed");
+		});
+		fixture.events.length = 0;
+
+		const navigationPromise = fixture.supervisor.navigateTree({
+			workspaceId: workspaceIdFromString("workspace-a"),
+			sessionId: sessionIdFromString("session-1"),
+			targetEntryId: "entry-1",
+			summaryMode: "default",
+		});
+		await waitForEvent(fixture.events, "tree.navigationStarted");
+		await expect(
+			fixture.supervisor.cancelTreeNavigation(
+				workspaceIdFromString("workspace-a"),
+				sessionIdFromString("session-1"),
+			),
+		).rejects.toMatchObject({
+			_tag: "SessionCancelFailed",
+			cause: "abort failed",
+		} satisfies Partial<SessionCancelFailed>);
+		rejectNavigation?.(new Error("provider failed"));
+
+		await expect(navigationPromise).rejects.toBeInstanceOf(SessionTreeNavigationFailed);
+		expect(fixture.events.map((event) => event._tag)).toContain("tree.navigationFailed");
+		expect(fixture.events.at(-1)).toMatchObject({ _tag: "session.statusChanged", session: { status: "ready" } });
+	});
+
 	test("maps runtime-origin compaction end events to GUI completion, failure, and cancellation", async () => {
 		const success = createSupervisorFixture();
 		await success.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));

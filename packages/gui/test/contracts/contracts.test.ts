@@ -16,6 +16,10 @@ import {
 	ResumeRename,
 	ResumeSearch,
 	ResumeUnarchive,
+	ResourcesGetInventory,
+	ResourcesOpenSource,
+	ResourcesReload,
+	ResourcesRevealSource,
 	RunCancelled,
 	RunCompleted,
 	SessionCompact,
@@ -30,6 +34,8 @@ import {
 	SessionGetTranscript,
 	SessionGetSlashCommands,
 	SessionGetTree,
+	SettingsGetEditorSnapshot,
+	SettingsUpdateCommon,
 	SessionPromptFailed,
 	SessionPromptRejected,
 	SessionRuntimeNotFound,
@@ -45,6 +51,7 @@ import {
 	TimelineMessageDelta,
 	TreeNavigationSnapshot,
 	TreeUpdated,
+	TrustSaveDecision,
 	WorkspacePickDirectory,
 	WorkspaceRemove,
 	WorkspaceSynced,
@@ -226,6 +233,102 @@ describe("gui contracts", () => {
 				}),
 			),
 		).resolves.toBeInstanceOf(SessionCancelTreeNavigation);
+	});
+
+	test("decodes control plane settings, trust, and resource commands", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+
+		await expect(
+			decodeGuiCommand(
+				new SettingsGetEditorSnapshot({ requestId: requestIdFromString("request-settings-editor"), workspaceId }),
+			),
+		).resolves.toBeInstanceOf(SettingsGetEditorSnapshot);
+		await expect(
+			decodeGuiCommand(
+				new SettingsUpdateCommon({
+					requestId: requestIdFromString("request-settings-update"),
+					workspaceId,
+					scope: "global",
+					patch: { defaultProvider: "openrouter", enableSkillCommands: true },
+				}),
+			),
+		).resolves.toBeInstanceOf(SettingsUpdateCommon);
+		await expect(
+			decodeGuiCommand(
+				new TrustSaveDecision({
+					requestId: requestIdFromString("request-trust-save"),
+					workspaceId,
+					optionId: "0-trust",
+				}),
+			),
+		).resolves.toBeInstanceOf(TrustSaveDecision);
+		await expect(
+			decodeGuiCommand(
+				new ResourcesGetInventory({ requestId: requestIdFromString("request-resources"), workspaceId }),
+			),
+		).resolves.toBeInstanceOf(ResourcesGetInventory);
+		await expect(
+			decodeGuiCommand(
+				new ResourcesReload({
+					requestId: requestIdFromString("request-resources-reload"),
+					workspaceId,
+					sessionId,
+				}),
+			),
+		).resolves.toBeInstanceOf(ResourcesReload);
+		await expect(
+			decodeGuiCommand(
+				new ResourcesOpenSource({
+					requestId: requestIdFromString("request-resource-open"),
+					workspaceId,
+					resourceId: "skill:/tmp/skill/SKILL.md",
+				}),
+			),
+		).resolves.toBeInstanceOf(ResourcesOpenSource);
+		await expect(
+			decodeGuiCommand(
+				new ResourcesRevealSource({
+					requestId: requestIdFromString("request-resource-reveal"),
+					workspaceId,
+					resourceId: "skill:/tmp/skill/SKILL.md",
+				}),
+			),
+		).resolves.toBeInstanceOf(ResourcesRevealSource);
+		await expect(
+			decodeGuiCommand({
+				_tag: "settings.updateCommon",
+				requestId: "request-invalid-settings-update",
+				workspaceId,
+				scope: "project",
+				patch: { defaultProvider: "openrouter" },
+			}),
+		).rejects.toThrow();
+		await expect(
+			decodeGuiCommand({
+				_tag: "settings.updateCommon",
+				requestId: "request-empty-settings-update",
+				workspaceId,
+				scope: "global",
+				patch: { defaultProvider: "" },
+			}),
+		).rejects.toThrow();
+		await expect(
+			decodeGuiCommand({
+				_tag: "trust.saveDecision",
+				requestId: "request-empty-trust-option",
+				workspaceId,
+				optionId: "",
+			}),
+		).rejects.toThrow();
+		await expect(
+			decodeGuiCommand({
+				_tag: "resources.openSource",
+				requestId: "request-empty-resource-id",
+				workspaceId,
+				resourceId: "",
+			}),
+		).rejects.toThrow();
 	});
 
 	test("decodes prompt commands with explicit running delivery modes", async () => {

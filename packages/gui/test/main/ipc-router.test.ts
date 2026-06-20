@@ -25,6 +25,8 @@ import {
 	type SessionTreeSnapshot,
 	type TimelineSnapshot,
 	type WorkspaceCatalogSnapshot,
+	ResourceReloadFailed,
+	TrustSaveDecision,
 	WorkspaceAdd,
 	WorkspacePickDirectory,
 	WorkspaceSync,
@@ -410,12 +412,15 @@ describe("createGuiInvokeHandler", () => {
 				updateExtensionEditorText: vi.fn(),
 			},
 			settingsBridgeService: {
+				getEditorSnapshot: vi.fn(),
 				getSummary: vi.fn(async () => {
 					throw new Error("settings unavailable");
 				}),
 				getTrustStatus: vi.fn(),
 				openSettingsFile: vi.fn(),
 				revealSettingsFile: vi.fn(),
+				saveTrustDecision: vi.fn(),
+				updateCommonSettings: vi.fn(),
 			},
 		});
 
@@ -430,6 +435,85 @@ describe("createGuiInvokeHandler", () => {
 				_tag: "app.error",
 				error: expect.objectContaining({ message: "Unhandled GUI IPC error", cause: "settings unavailable" }),
 			}),
+		);
+	});
+
+	test("trust save succeeds and publishes refreshed trust/settings when resource reload is blocked", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const status = {
+			workspaceId,
+			cwd: "/tmp/workspace",
+			trusted: true,
+			source: "saved" as const,
+			requiresTrust: false,
+			options: [],
+		};
+		const summary = {
+			workspaceId,
+			globalSettingsPath: "/tmp/agent/settings.json",
+			projectSettingsPath: "/tmp/workspace/.pi/settings.json",
+			enableSkillCommands: true,
+			steeringMode: "all" as const,
+			followUpMode: "all" as const,
+			defaultProjectTrust: "ask" as const,
+			settingsDiagnostics: [],
+		};
+		const editor = {
+			workspaceId,
+			globalSettingsPath: summary.globalSettingsPath,
+			projectSettingsPath: summary.projectSettingsPath,
+			fields: [],
+			updatedAt: "2026-06-20T00:00:00.000Z",
+			settingsDiagnostics: [],
+		};
+		const sender = createSender();
+		const handler = createGuiInvokeHandler({
+			app,
+			eventBus: new RendererEventBus(),
+			mode: "test",
+			policy,
+			settingsBridgeService: {
+				getEditorSnapshot: vi.fn(async () => editor),
+				getSummary: vi.fn(async () => summary),
+				getTrustStatus: vi.fn(),
+				openSettingsFile: vi.fn(),
+				revealSettingsFile: vi.fn(),
+				saveTrustDecision: vi.fn(async () => status),
+				updateCommonSettings: vi.fn(),
+			},
+			resourceBridgeService: {
+				getInventory: vi.fn(),
+				openSource: vi.fn(),
+				reload: vi.fn(async () => {
+					throw new ResourceReloadFailed({
+						workspaceId,
+						message: "Resource reload is unavailable while the Pi session is busy",
+					});
+				}),
+				revealSource: vi.fn(),
+			},
+		});
+
+		const result = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new TrustSaveDecision({
+				requestId: requestIdFromString("request-trust-save"),
+				workspaceId,
+				optionId: "0-trust",
+			}),
+		);
+
+		expect(result).toMatchObject({ ok: true, data: status });
+		expect(sender.send.mock.calls.map((call) => call[1])).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ _tag: "trust.statusUpdated", status }),
+				expect.objectContaining({ _tag: "settings.summaryUpdated", summary }),
+				expect.objectContaining({ _tag: "settings.editorUpdated", editor }),
+				expect.objectContaining({
+					_tag: "app.error",
+					error: expect.objectContaining({ _tag: "ResourceReloadFailed" }),
+				}),
+			]),
 		);
 	});
 

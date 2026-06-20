@@ -3,6 +3,7 @@ import type {
 	ModelThinkingSnapshot,
 	QueueRestoreSnapshot,
 	QueueSnapshot,
+	ResourceInventorySnapshot,
 	SessionCompactionSnapshot,
 	SessionId,
 	SessionTreeSnapshot,
@@ -69,10 +70,12 @@ export interface SessionDriver {
 	compact(handle: RuntimeSessionHandle, customInstructions: string | undefined): Promise<SessionCompactionSnapshot>;
 	getModelThinking(handle: RuntimeSessionHandle): Promise<ModelThinkingSnapshot>;
 	getQueue(handle: RuntimeSessionHandle): Promise<QueueSnapshot>;
+	getResourceInventory?(handle: RuntimeSessionHandle): Promise<ResourceInventorySnapshot>;
 	getSlashCommands?(handle: RuntimeSessionHandle): Promise<SlashCommandSnapshot[]>;
 	getTree(handle: RuntimeSessionHandle): Promise<SessionTreeSnapshot>;
 	getTranscript(handle: RuntimeSessionHandle): Promise<TimelineSnapshot>;
 	navigateTree(handle: RuntimeSessionHandle, request: NavigateRuntimeTreeRequest): Promise<TreeNavigationSnapshot>;
+	reloadResources?(handle: RuntimeSessionHandle): Promise<ResourceInventorySnapshot>;
 	restoreQueuedMessages(handle: RuntimeSessionHandle): Promise<QueueRestoreSnapshot>;
 	setModel(handle: RuntimeSessionHandle, provider: string, modelId: string): Promise<ModelThinkingSnapshot>;
 	setThinkingLevel(handle: RuntimeSessionHandle, level: ThinkingLevel): Promise<ModelThinkingSnapshot>;

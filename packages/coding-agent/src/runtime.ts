@@ -22,8 +22,15 @@ export {
 	FileAuthStorageBackend,
 	InMemoryAuthStorageBackend,
 } from "./core/auth-storage.ts";
-export type { ExtensionUIContext, ExtensionUIDialogOptions, WorkingIndicatorOptions } from "./core/extensions/index.ts";
+export type {
+	Extension,
+	ExtensionUIContext,
+	ExtensionUIDialogOptions,
+	LoadExtensionsResult,
+	WorkingIndicatorOptions,
+} from "./core/extensions/index.ts";
 export { ModelRegistry } from "./core/model-registry.ts";
+export type { ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.ts";
 export { getDefaultSessionDir, type SessionEntry, type SessionInfo, SessionManager } from "./core/session-manager.ts";
 export {
 	filterAndSortSessions,
@@ -40,6 +47,7 @@ export {
 	type Settings,
 	SettingsManager,
 } from "./core/settings-manager.ts";
+export type { Skill } from "./core/skills.ts";
 export {
 	BUILTIN_SLASH_COMMANDS,
 	type BuiltinSlashCommand,

@@ -1,9 +1,11 @@
 import {
 	decodeModelThinkingSnapshot,
 	decodeQueueRestoreSnapshot,
+	decodeResourceInventorySnapshot,
 	decodeSessionCatalogSnapshot,
 	decodeSessionCompactionSnapshot,
 	decodeSessionTreeSnapshot,
+	decodeSettingsEditorSnapshot,
 	decodeSettingsSummarySnapshot,
 	decodeTimelineSnapshot,
 	decodeTreeNavigationSnapshot,
@@ -11,8 +13,10 @@ import {
 	decodeWorkspaceCatalogSnapshot,
 	type ModelThinkingSnapshot,
 	type QueueRestoreSnapshot,
+	type ResourceInventorySnapshot,
 	type SessionCatalogSnapshot,
 	type SessionTreeSnapshot,
+	type SettingsEditorSnapshot,
 	type SettingsSummarySnapshot,
 	type TimelineSnapshot,
 	type TrustStatusSnapshot,
@@ -65,6 +69,16 @@ export async function applyCommandResultData(state: CatalogViewState, data: unkn
 			},
 		};
 	}
+	const settingsEditor = await decodeSettingsEditor(data);
+	if (settingsEditor) {
+		return {
+			...state,
+			settingsEditorByWorkspaceId: {
+				...state.settingsEditorByWorkspaceId,
+				[settingsEditor.workspaceId]: settingsEditor,
+			},
+		};
+	}
 	const trustStatus = await decodeTrustStatus(data);
 	if (trustStatus) {
 		return {
@@ -72,6 +86,16 @@ export async function applyCommandResultData(state: CatalogViewState, data: unkn
 			trustStatusByWorkspaceId: {
 				...state.trustStatusByWorkspaceId,
 				[trustStatus.workspaceId]: trustStatus,
+			},
+		};
+	}
+	const resourceInventory = await decodeResourceInventory(data);
+	if (resourceInventory) {
+		return {
+			...state,
+			resourceInventoryByWorkspaceId: {
+				...state.resourceInventoryByWorkspaceId,
+				[resourceInventory.workspaceId]: resourceInventory,
 			},
 		};
 	}
@@ -134,9 +158,25 @@ async function decodeSettingsSummary(data: unknown): Promise<SettingsSummarySnap
 	}
 }
 
+async function decodeSettingsEditor(data: unknown): Promise<SettingsEditorSnapshot | undefined> {
+	try {
+		return await decodeSettingsEditorSnapshot(data);
+	} catch {
+		return undefined;
+	}
+}
+
 async function decodeTrustStatus(data: unknown): Promise<TrustStatusSnapshot | undefined> {
 	try {
 		return await decodeTrustStatusSnapshot(data);
+	} catch {
+		return undefined;
+	}
+}
+
+async function decodeResourceInventory(data: unknown): Promise<ResourceInventorySnapshot | undefined> {
+	try {
+		return await decodeResourceInventorySnapshot(data);
 	} catch {
 		return undefined;
 	}

@@ -10,6 +10,7 @@ import {
 	type Api,
 	type Model,
 	type PromptOptions,
+	type ResourceLoader,
 	type SessionManager,
 	type SlashCommandInfo,
 } from "@earendil-works/pi-coding-agent/runtime";
@@ -50,6 +51,7 @@ export interface RuntimeAgentSession {
 		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
 	): Promise<{ editorText?: string; cancelled: boolean; aborted?: boolean; summaryEntry?: { id: string } }>;
 	prompt(text: string, options?: PromptOptions): Promise<void>;
+	reload?(): Promise<void>;
 	abortCompaction?(): void;
 	abortBranchSummary?(): void;
 	sessionManager?: RuntimeSessionManager;
@@ -70,6 +72,7 @@ export interface ManagedAgentRuntime {
 
 export interface RuntimeAgentServices {
 	modelRegistry?: Pick<AgentSessionServices["modelRegistry"], "find" | "getAll" | "hasConfiguredAuth">;
+	resourceLoader?: Pick<ResourceLoader, "getExtensions" | "getSkills" | "reload">;
 }
 
 export type RuntimeModel = Model<Api>;

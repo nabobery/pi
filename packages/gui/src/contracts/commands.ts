@@ -3,8 +3,10 @@ import { GuiError } from "./errors.ts";
 import { ExtensionUiRequestId, RequestId, SessionId, WorkspaceId } from "./ids.ts";
 import {
 	BootstrapSnapshot,
+	CommonSettingsPatch,
 	ModelThinkingSnapshot,
 	QueueRestoreSnapshot,
+	ResourceInventorySnapshot,
 	ResumeNameFilter,
 	ResumeScope,
 	ResumeSearchSnapshot,
@@ -12,6 +14,7 @@ import {
 	SessionCompactionSnapshot,
 	SessionCatalogSnapshot,
 	SessionTreeSnapshot,
+	SettingsEditorSnapshot,
 	SettingsSummarySnapshot,
 	SlashCommandCatalogSnapshot,
 	ThinkingLevel,
@@ -317,6 +320,26 @@ export class SettingsGetSummary extends Schema.TaggedRequest<SettingsGetSummary>
 	payload: { requestId: RequestId, workspaceId: WorkspaceId },
 }) {}
 
+export class SettingsGetEditorSnapshot extends Schema.TaggedRequest<SettingsGetEditorSnapshot>()(
+	"settings.getEditorSnapshot",
+	{
+		failure: GuiError,
+		success: SettingsEditorSnapshot,
+		payload: { requestId: RequestId, workspaceId: WorkspaceId },
+	},
+) {}
+
+export class SettingsUpdateCommon extends Schema.TaggedRequest<SettingsUpdateCommon>()("settings.updateCommon", {
+	failure: GuiError,
+	success: SettingsEditorSnapshot,
+	payload: {
+		requestId: RequestId,
+		workspaceId: WorkspaceId,
+		scope: Schema.Literal("global"),
+		patch: CommonSettingsPatch,
+	},
+}) {}
+
 export class SettingsOpenGlobalFile extends Schema.TaggedRequest<SettingsOpenGlobalFile>()("settings.openGlobalFile", {
 	failure: GuiError,
 	success: VoidSuccess,
@@ -356,6 +379,36 @@ export class TrustGetStatus extends Schema.TaggedRequest<TrustGetStatus>()("trus
 	payload: { requestId: RequestId, workspaceId: WorkspaceId },
 }) {}
 
+export class TrustSaveDecision extends Schema.TaggedRequest<TrustSaveDecision>()("trust.saveDecision", {
+	failure: GuiError,
+	success: TrustStatusSnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, optionId: Schema.NonEmptyTrimmedString },
+}) {}
+
+export class ResourcesGetInventory extends Schema.TaggedRequest<ResourcesGetInventory>()("resources.getInventory", {
+	failure: GuiError,
+	success: ResourceInventorySnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: Schema.optional(SessionId) },
+}) {}
+
+export class ResourcesReload extends Schema.TaggedRequest<ResourcesReload>()("resources.reload", {
+	failure: GuiError,
+	success: ResourceInventorySnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: Schema.optional(SessionId) },
+}) {}
+
+export class ResourcesOpenSource extends Schema.TaggedRequest<ResourcesOpenSource>()("resources.openSource", {
+	failure: GuiError,
+	success: VoidSuccess,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, resourceId: Schema.NonEmptyTrimmedString },
+}) {}
+
+export class ResourcesRevealSource extends Schema.TaggedRequest<ResourcesRevealSource>()("resources.revealSource", {
+	failure: GuiError,
+	success: VoidSuccess,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, resourceId: Schema.NonEmptyTrimmedString },
+}) {}
+
 export const GuiCommand = Schema.Union(
 	AppBootstrap,
 	RendererReady,
@@ -391,11 +444,18 @@ export const GuiCommand = Schema.Union(
 	ExtensionUiRespond,
 	ExtensionUiUpdateEditorText,
 	SettingsGetSummary,
+	SettingsGetEditorSnapshot,
+	SettingsUpdateCommon,
 	SettingsOpenGlobalFile,
 	SettingsRevealGlobalFile,
 	SettingsOpenProjectFile,
 	SettingsRevealProjectFile,
 	TrustGetStatus,
+	TrustSaveDecision,
+	ResourcesGetInventory,
+	ResourcesReload,
+	ResourcesOpenSource,
+	ResourcesRevealSource,
 );
 export type GuiCommand = Schema.Schema.Type<typeof GuiCommand>;
 

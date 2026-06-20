@@ -105,6 +105,24 @@ describe("tree navigator", () => {
 			summaryMode: "none",
 		});
 	});
+
+	test("cancels pending tree navigation from Escape and keeps the dialog open", async () => {
+		const store = storeStub();
+		render(
+			<TreeNavigator
+				draft=""
+				selectedSessionId={sessionId}
+				selectedWorkspaceId={workspaceId}
+				state={stateWithTree({ foldedEntryIds: [], navigationPending: true, selectedEntryId: "child" })}
+				store={store}
+			/>,
+		);
+
+		await key(inputByLabel("Search session tree"), "Escape");
+
+		expect(store.cancelTreeNavigation).toHaveBeenCalledWith(workspaceId, sessionId);
+		expect(store.closeTreeNavigator).not.toHaveBeenCalled();
+	});
 });
 
 describe("compact dialog", () => {
@@ -196,7 +214,9 @@ function emptyState(): CatalogViewState {
 		composerDrafts: {},
 		modelThinkingBySessionKey: {},
 		settingsSummaryByWorkspaceId: {},
+		settingsEditorByWorkspaceId: {},
 		trustStatusByWorkspaceId: {},
+		resourceInventoryByWorkspaceId: {},
 		extensionUiBySessionKey: {},
 		runtimeOverlaysBySessionKey: {},
 		activityBySessionKey: {},
@@ -226,6 +246,8 @@ function emptyState(): CatalogViewState {
 			selectedEntryId: undefined,
 			foldedEntryIds: [],
 			loading: false,
+			navigationCancelling: false,
+			navigationPending: false,
 			error: undefined,
 		},
 		compactDialog: {
@@ -238,6 +260,7 @@ function emptyState(): CatalogViewState {
 			error: undefined,
 			lastResult: undefined,
 		},
+		controlPlane: { open: false, tab: "settings", loading: false, error: undefined },
 		error: undefined,
 		pending: false,
 	};
@@ -249,6 +272,7 @@ function storeStub(): GuiCatalogStore {
 		cancelCompaction: vi.fn().mockResolvedValue(undefined),
 		cancelRun: vi.fn().mockResolvedValue(undefined),
 		cancelTreeNavigation: vi.fn().mockResolvedValue(undefined),
+		closeControlPlane: vi.fn(),
 		closeCommandPalette: vi.fn(),
 		closeCompactDialog: vi.fn(),
 		closeResumePicker: vi.fn(),
@@ -259,6 +283,8 @@ function storeStub(): GuiCatalogStore {
 		createSession: vi.fn().mockResolvedValue(undefined),
 		expandTreeNavigatorEntry: vi.fn(),
 		getSettingsSummary: vi.fn().mockResolvedValue(undefined),
+		getResourceInventory: vi.fn().mockResolvedValue(undefined),
+		getSettingsEditor: vi.fn().mockResolvedValue(undefined),
 		getSlashCommands: vi.fn().mockResolvedValue(undefined),
 		getSnapshot: vi.fn(),
 		getTree: vi.fn().mockResolvedValue(undefined),
@@ -267,12 +293,14 @@ function storeStub(): GuiCatalogStore {
 		navigateTree: vi.fn().mockResolvedValue(undefined),
 		openCommandPalette: vi.fn(),
 		openCompactDialog: vi.fn(),
+		openControlPlane: vi.fn().mockResolvedValue(undefined),
 		openResumePicker: vi.fn().mockResolvedValue(undefined),
 		openSession: vi.fn().mockResolvedValue(undefined),
 		openSettingsFile: vi.fn().mockResolvedValue(undefined),
 		openTreeNavigator: vi.fn(),
 		pickWorkspaceDirectory: vi.fn().mockResolvedValue(undefined),
 		renameResumeSession: vi.fn().mockResolvedValue(undefined),
+		openResourceSource: vi.fn().mockResolvedValue(undefined),
 		renameSession: vi.fn().mockResolvedValue(undefined),
 		requestSessionRename: vi.fn(),
 		respondToExtensionUi: vi.fn().mockResolvedValue(undefined),
@@ -281,6 +309,8 @@ function storeStub(): GuiCatalogStore {
 		resumeUnarchiveSession: vi.fn().mockResolvedValue(undefined),
 		restoreQueuedMessages: vi.fn().mockResolvedValue(undefined),
 		revealSettingsFile: vi.fn().mockResolvedValue(undefined),
+		reloadResources: vi.fn().mockResolvedValue(undefined),
+		revealResourceSource: vi.fn().mockResolvedValue(undefined),
 		searchResume: vi.fn().mockResolvedValue(undefined),
 		selectWorkspace: vi.fn().mockResolvedValue(undefined),
 		sendMessage: vi.fn().mockResolvedValue(true),
@@ -292,6 +322,8 @@ function storeStub(): GuiCatalogStore {
 		setResumePickerSelectedIndex: vi.fn(),
 		setResumePickerShowPaths: vi.fn(),
 		setThinkingLevel: vi.fn().mockResolvedValue(undefined),
+		saveTrustDecision: vi.fn().mockResolvedValue(undefined),
+		updateCommonSettings: vi.fn().mockResolvedValue(undefined),
 		setTreeEntryLabel: vi.fn().mockResolvedValue(undefined),
 		setTreeNavigatorFilterMode: vi.fn(),
 		setTreeNavigatorQuery: vi.fn(),

@@ -1162,6 +1162,94 @@ describe("createGuiCatalogStore", () => {
 			sessionRenameRequestsBySessionKey: { "workspace-1:session-1": 1 },
 		});
 	});
+
+	test("keeps concurrent events while opening the control plane", async () => {
+		const listeners: Array<(event: GuiEvent) => void> = [];
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const pendingResults = [
+			deferredInvokeResult(),
+			deferredInvokeResult(),
+			deferredInvokeResult(),
+			deferredInvokeResult(),
+		];
+		const deferredResults = [...pendingResults];
+		const invoke = vi.fn(() => {
+			const next = deferredResults.shift();
+			if (!next) throw new Error("Unexpected invoke");
+			return next.promise;
+		});
+		const store = createGuiCatalogStore(
+			{
+				invoke,
+				subscribe: (listener) => {
+					listeners.push(listener);
+					return () => undefined;
+				},
+			},
+			{ revision: catalogRevisionFromString("0"), selectedWorkspaceId: workspaceId, workspaces: [] },
+		);
+
+		const openPromise = store.openControlPlane("settings", workspaceId, sessionId);
+		listeners[0](
+			new SessionCatalogUpdated({
+				eventId: eventIdFromString("event-concurrent-session"),
+				sequence: 1,
+				workspaceId,
+				sessions: [sessionSnapshot(workspaceId, sessionId, "ready")],
+			}),
+		);
+		const summary = {
+			workspaceId,
+			globalSettingsPath: "/tmp/agent/settings.json",
+			projectSettingsPath: "/tmp/workspace/.pi/settings.json",
+			enableSkillCommands: true,
+			steeringMode: "all" as const,
+			followUpMode: "all" as const,
+			defaultProjectTrust: "ask" as const,
+			settingsDiagnostics: [],
+		};
+		const editor = {
+			workspaceId,
+			globalSettingsPath: summary.globalSettingsPath,
+			projectSettingsPath: summary.projectSettingsPath,
+			fields: [],
+			updatedAt: "2026-06-20T00:00:00.000Z",
+			settingsDiagnostics: [],
+		};
+		const trust = {
+			workspaceId,
+			cwd: "/tmp/workspace",
+			trusted: false,
+			source: "unknown" as const,
+			requiresTrust: true,
+			options: [],
+		};
+		const inventory = {
+			workspaceId,
+			sessionId,
+			skills: [],
+			extensions: [],
+			extensionErrors: [],
+			diagnostics: [],
+			updatedAt: "2026-06-20T00:00:00.000Z",
+		};
+		for (const [index, data] of [summary, editor, trust, inventory].entries()) {
+			pendingResults[index]?.resolve(guiResult(data));
+		}
+		await openPromise;
+
+		expect(store.getSnapshot()).toMatchObject({
+			controlPlane: { open: true, tab: "settings", loading: false, error: undefined },
+			sessionCatalogs: {
+				[workspaceId]: { sessions: [expect.objectContaining({ id: sessionId })] },
+			},
+			settingsSummaryByWorkspaceId: { [workspaceId]: summary },
+			settingsEditorByWorkspaceId: { [workspaceId]: editor },
+			trustStatusByWorkspaceId: { [workspaceId]: trust },
+			resourceInventoryByWorkspaceId: { [workspaceId]: inventory },
+		});
+	});
 });
 
 function deferredInvokeResult() {
@@ -1170,6 +1258,10 @@ function deferredInvokeResult() {
 		resolve = nextResolve;
 	});
 	return { promise, resolve };
+}
+
+function guiResult(data: unknown): Awaited<ReturnType<RendererCatalogApi["invoke"]>> {
+	return { ok: true, requestId: requestIdFromString("request-control-plane"), data };
 }
 
 async function flushPromises(): Promise<void> {

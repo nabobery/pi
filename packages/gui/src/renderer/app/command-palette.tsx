@@ -72,9 +72,14 @@ export function CommandPalette({
 			void store.createSession(selectedWorkspaceId);
 			return;
 		}
-		if (command.name === "settings" || command.name === "trust") {
-			document.getElementById("settings-trust-panel")?.focus();
+		if (command.name === "settings") {
 			close();
+			void store.openControlPlane("settings", selectedWorkspaceId, selectedSessionId);
+			return;
+		}
+		if (command.name === "trust") {
+			close();
+			void store.openControlPlane("trust", selectedWorkspaceId, selectedSessionId);
 			return;
 		}
 		if (command.name === "model") {

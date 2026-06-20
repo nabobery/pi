@@ -189,8 +189,56 @@ export type SettingsSummarySnapshot = Schema.Schema.Type<typeof SettingsSummaryS
 export const decodeSettingsSummarySnapshot = (value: unknown): Promise<SettingsSummarySnapshot> =>
 	Effect.runPromise(Schema.decodeUnknown(SettingsSummarySnapshot)(value));
 
+export const SettingsSource = Schema.Literal("default", "global", "project");
+export type SettingsSource = Schema.Schema.Type<typeof SettingsSource>;
+
+export const SettingsValueSnapshot = Schema.Union(
+	Schema.String,
+	Schema.Boolean,
+	Schema.Array(Schema.String),
+	Schema.Null,
+);
+export type SettingsValueSnapshot = Schema.Schema.Type<typeof SettingsValueSnapshot>;
+
+export const SettingsFieldSnapshot = Schema.Struct({
+	key: Schema.String,
+	label: Schema.String,
+	source: SettingsSource,
+	effectiveValue: SettingsValueSnapshot,
+	globalValue: Schema.optional(SettingsValueSnapshot),
+	projectValue: Schema.optional(SettingsValueSnapshot),
+});
+export type SettingsFieldSnapshot = Schema.Schema.Type<typeof SettingsFieldSnapshot>;
+
 export const QueueMode = Schema.Literal("all", "one-at-a-time");
 export type QueueMode = Schema.Schema.Type<typeof QueueMode>;
+
+export const CommonSettingsPatch = Schema.Struct({
+	defaultProvider: Schema.optional(Schema.NonEmptyTrimmedString),
+	defaultModel: Schema.optional(Schema.NonEmptyTrimmedString),
+	defaultThinkingLevel: Schema.optional(ThinkingLevel),
+	enabledModels: Schema.optional(Schema.Array(Schema.NonEmptyTrimmedString)),
+	enableSkillCommands: Schema.optional(Schema.Boolean),
+	steeringMode: Schema.optional(QueueMode),
+	followUpMode: Schema.optional(QueueMode),
+	defaultProjectTrust: Schema.optional(Schema.Literal("ask", "always", "never")),
+	compactionEnabled: Schema.optional(Schema.Boolean),
+	imageAutoResize: Schema.optional(Schema.Boolean),
+	imageBlockImages: Schema.optional(Schema.Boolean),
+});
+export type CommonSettingsPatch = Schema.Schema.Type<typeof CommonSettingsPatch>;
+
+export const SettingsEditorSnapshot = Schema.Struct({
+	workspaceId: WorkspaceId,
+	globalSettingsPath: Schema.String,
+	projectSettingsPath: Schema.String,
+	fields: Schema.Array(SettingsFieldSnapshot),
+	updatedAt: Schema.String,
+	settingsDiagnostics: SettingsSummarySnapshot.fields.settingsDiagnostics,
+});
+export type SettingsEditorSnapshot = Schema.Schema.Type<typeof SettingsEditorSnapshot>;
+export const decodeSettingsEditorSnapshot = (value: unknown): Promise<SettingsEditorSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(SettingsEditorSnapshot)(value));
 
 export const QueueMessageKind = Schema.Literal("steering", "followUp");
 export type QueueMessageKind = Schema.Schema.Type<typeof QueueMessageKind>;
@@ -323,6 +371,7 @@ export const TrustStatusSnapshot = Schema.Struct({
 	requiresTrust: Schema.Boolean,
 	options: Schema.Array(
 		Schema.Struct({
+			id: Schema.String,
 			label: Schema.String,
 			trusted: Schema.Boolean,
 			updates: Schema.Array(
@@ -337,6 +386,64 @@ export const TrustStatusSnapshot = Schema.Struct({
 export type TrustStatusSnapshot = Schema.Schema.Type<typeof TrustStatusSnapshot>;
 export const decodeTrustStatusSnapshot = (value: unknown): Promise<TrustStatusSnapshot> =>
 	Effect.runPromise(Schema.decodeUnknown(TrustStatusSnapshot)(value));
+
+export const ResourceSourceInfoSnapshot = Schema.Struct({
+	path: Schema.String,
+	source: Schema.String,
+	scope: Schema.Literal("user", "project", "temporary"),
+	origin: Schema.Literal("package", "top-level"),
+	baseDir: Schema.optional(Schema.String),
+});
+export type ResourceSourceInfoSnapshot = Schema.Schema.Type<typeof ResourceSourceInfoSnapshot>;
+
+export const ResourceDiagnosticSnapshot = Schema.Struct({
+	type: Schema.Literal("error", "warning", "collision"),
+	message: Schema.String,
+	path: Schema.optional(Schema.String),
+});
+export type ResourceDiagnosticSnapshot = Schema.Schema.Type<typeof ResourceDiagnosticSnapshot>;
+
+export const SkillResourceSnapshot = Schema.Struct({
+	id: Schema.String,
+	name: Schema.String,
+	description: Schema.String,
+	filePath: Schema.String,
+	baseDir: Schema.String,
+	disableModelInvocation: Schema.Boolean,
+	sourceInfo: ResourceSourceInfoSnapshot,
+});
+export type SkillResourceSnapshot = Schema.Schema.Type<typeof SkillResourceSnapshot>;
+
+export const ExtensionResourceSnapshot = Schema.Struct({
+	id: Schema.String,
+	name: Schema.String,
+	path: Schema.String,
+	sourceInfo: ResourceSourceInfoSnapshot,
+	commands: Schema.Number,
+	tools: Schema.Number,
+	flags: Schema.Number,
+});
+export type ExtensionResourceSnapshot = Schema.Schema.Type<typeof ExtensionResourceSnapshot>;
+
+export const ExtensionLoadErrorSnapshot = Schema.Struct({
+	id: Schema.String,
+	path: Schema.String,
+	error: Schema.String,
+});
+export type ExtensionLoadErrorSnapshot = Schema.Schema.Type<typeof ExtensionLoadErrorSnapshot>;
+
+export const ResourceInventorySnapshot = Schema.Struct({
+	workspaceId: WorkspaceId,
+	sessionId: Schema.optional(SessionId),
+	skills: Schema.Array(SkillResourceSnapshot),
+	extensions: Schema.Array(ExtensionResourceSnapshot),
+	extensionErrors: Schema.Array(ExtensionLoadErrorSnapshot),
+	diagnostics: Schema.Array(ResourceDiagnosticSnapshot),
+	updatedAt: Schema.String,
+});
+export type ResourceInventorySnapshot = Schema.Schema.Type<typeof ResourceInventorySnapshot>;
+export const decodeResourceInventorySnapshot = (value: unknown): Promise<ResourceInventorySnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(ResourceInventorySnapshot)(value));
 
 export const ExtensionUiRequestSnapshot = Schema.Struct({
 	id: ExtensionUiRequestId,

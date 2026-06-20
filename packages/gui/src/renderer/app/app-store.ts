@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import {
 	ExtensionUiRespond,
 	ExtensionUiUpdateEditorText,
+	type CommonSettingsPatch,
 	type ExtensionUiRequestSnapshot,
 	type ExtensionUiStateSnapshot,
 	SessionArchive,
@@ -20,11 +21,13 @@ import {
 	SessionUnarchive,
 	type SessionSnapshot,
 	type SessionTreeSnapshot,
+	type ResourceInventorySnapshot,
 	SettingsGetSummary,
 	SettingsOpenGlobalFile,
 	SettingsOpenProjectFile,
 	SettingsRevealGlobalFile,
 	SettingsRevealProjectFile,
+	type SettingsEditorSnapshot,
 	type SettingsSummarySnapshot,
 	type ModelThinkingSnapshot,
 	type QueueSnapshot,
@@ -61,12 +64,12 @@ import {
 } from "./session-state-projections.ts";
 import { applyCommandResultData, decodeQueueRestoreData } from "./app-result-appliers.ts";
 import {
-	createPhase9StoreActions,
+	createCommandPaletteStoreActions,
 	emptyCommandPaletteState,
 	emptyResumePickerState,
 	type CommandPaletteState,
 	type ResumePickerState,
-} from "./phase9-store.ts";
+} from "./command-palette-store.ts";
 import {
 	applyCompactionResult,
 	applyNavigationResult,
@@ -77,6 +80,12 @@ import {
 	type CompactDialogState,
 	type TreeNavigatorState,
 } from "./tree-and-compaction-store.ts";
+import {
+	applyControlPlaneEvent,
+	createControlPlaneStoreActions,
+	emptyControlPlaneState,
+	type ControlPlaneState,
+} from "./control-plane-store.ts";
 
 export interface RendererCatalogApi {
 	invoke(command: GuiCommand): Promise<GuiCommandResult>;
@@ -96,7 +105,9 @@ export interface CatalogViewState {
 	composerDrafts: Readonly<Record<string, string>>;
 	modelThinkingBySessionKey: Readonly<Record<string, ModelThinkingSnapshot>>;
 	settingsSummaryByWorkspaceId: Readonly<Record<string, SettingsSummarySnapshot>>;
+	settingsEditorByWorkspaceId: Readonly<Record<string, SettingsEditorSnapshot>>;
 	trustStatusByWorkspaceId: Readonly<Record<string, TrustStatusSnapshot>>;
+	resourceInventoryByWorkspaceId: Readonly<Record<string, ResourceInventorySnapshot>>;
 	extensionUiBySessionKey: Readonly<Record<string, ExtensionUiSessionState>>;
 	runtimeOverlaysBySessionKey: Readonly<Record<string, SessionRuntimeOverlay>>;
 	activityBySessionKey: Readonly<Record<string, SessionActivitySnapshot>>;
@@ -107,6 +118,7 @@ export interface CatalogViewState {
 	resumePicker: ResumePickerState;
 	treeNavigator: TreeNavigatorState;
 	compactDialog: CompactDialogState;
+	controlPlane: ControlPlaneState;
 	error: string | undefined;
 	pending: boolean;
 }
@@ -133,6 +145,7 @@ export interface GuiCatalogStore {
 	createSession(workspaceId: WorkspaceId): Promise<void>;
 	closeCommandPalette(): void;
 	closeCompactDialog(): void;
+	closeControlPlane(): void;
 	closeResumePicker(): void;
 	closeTreeNavigator(): void;
 	compactSession(workspaceId: WorkspaceId, sessionId: SessionId, customInstructions: string): Promise<void>;
@@ -141,12 +154,19 @@ export interface GuiCatalogStore {
 	getSlashCommands(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	getSnapshot(): CatalogViewState;
 	getSettingsSummary(workspaceId: WorkspaceId): Promise<void>;
+	getSettingsEditor(workspaceId: WorkspaceId): Promise<void>;
+	getResourceInventory(workspaceId: WorkspaceId, sessionId: SessionId | undefined): Promise<void>;
 	getTree(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	getTrustStatus(workspaceId: WorkspaceId): Promise<void>;
 	getTranscript(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	openSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	openCommandPalette(query?: string): void;
 	openCompactDialog(workspaceId: WorkspaceId, sessionId: SessionId): void;
+	openControlPlane(
+		tab: ControlPlaneState["tab"],
+		workspaceId: WorkspaceId,
+		sessionId: SessionId | undefined,
+	): Promise<void>;
 	openResumePicker(workspaceId: WorkspaceId): Promise<void>;
 	openSettingsFile(workspaceId: WorkspaceId, scope: "global" | "project"): Promise<void>;
 	pickWorkspaceDirectory(): Promise<void>;
@@ -170,6 +190,9 @@ export interface GuiCatalogStore {
 			| { kind: "getEditorText"; value: string },
 	): Promise<void>;
 	revealSettingsFile(workspaceId: WorkspaceId, scope: "global" | "project"): Promise<void>;
+	openResourceSource(workspaceId: WorkspaceId, resourceId: string): Promise<void>;
+	reloadResources(workspaceId: WorkspaceId, sessionId: SessionId | undefined): Promise<void>;
+	revealResourceSource(workspaceId: WorkspaceId, resourceId: string): Promise<void>;
 	renameSession(workspaceId: WorkspaceId, sessionId: SessionId, title: string): Promise<void>;
 	requestSessionRename(workspaceId: WorkspaceId, sessionId: SessionId): void;
 	renameResumeSession(workspaceId: WorkspaceId, sessionId: SessionId, title: string): Promise<void>;
@@ -196,6 +219,8 @@ export interface GuiCatalogStore {
 	setResumePickerShowPaths(showPaths: boolean): void;
 	setResumePickerSelectedIndex(selectedIndex: number): void;
 	setThinkingLevel(workspaceId: WorkspaceId, sessionId: SessionId, thinkingLevel: ThinkingLevel): Promise<void>;
+	saveTrustDecision(workspaceId: WorkspaceId, optionId: string): Promise<void>;
+	updateCommonSettings(workspaceId: WorkspaceId, patch: CommonSettingsPatch): Promise<void>;
 	setTreeEntryLabel(workspaceId: WorkspaceId, sessionId: SessionId, entryId: string, label: string): Promise<void>;
 	setTreeNavigatorFilterMode(filterMode: TreeNavigatorState["filterMode"]): void;
 	setTreeNavigatorQuery(query: string): void;
@@ -224,7 +249,9 @@ export function createGuiCatalogStore(
 		composerDrafts: {},
 		modelThinkingBySessionKey: {},
 		settingsSummaryByWorkspaceId: {},
+		settingsEditorByWorkspaceId: {},
 		trustStatusByWorkspaceId: {},
+		resourceInventoryByWorkspaceId: {},
 		extensionUiBySessionKey: {},
 		runtimeOverlaysBySessionKey: {},
 		activityBySessionKey: {},
@@ -235,6 +262,7 @@ export function createGuiCatalogStore(
 		resumePicker: emptyResumePickerState(),
 		treeNavigator: emptyTreeNavigatorState(),
 		compactDialog: emptyCompactDialogState(),
+		controlPlane: emptyControlPlaneState(),
 		error: options.initialError,
 		pending: false,
 	};
@@ -273,7 +301,7 @@ export function createGuiCatalogStore(
 		await invoke(command);
 	}
 
-	const phase9Actions = createPhase9StoreActions({
+	const commandPaletteActions = createCommandPaletteStoreActions({
 		api,
 		getState: () => state,
 		invoke,
@@ -284,6 +312,12 @@ export function createGuiCatalogStore(
 		api,
 		getState: () => state,
 		invoke,
+		nextRequestId,
+		updateState,
+	});
+	const controlPlaneActions = createControlPlaneStoreActions({
+		api,
+		getState: () => state,
 		nextRequestId,
 		updateState,
 	});
@@ -400,7 +434,8 @@ export function createGuiCatalogStore(
 			invokeVoid(new WorkspaceSync({ requestId: nextRequestId("workspace.sync"), workspaceId })),
 		unarchiveSession: (workspaceId, sessionId) =>
 			invokeVoid(new SessionUnarchive({ requestId: nextRequestId("session.unarchive"), workspaceId, sessionId })),
-		...phase9Actions,
+		...controlPlaneActions,
+		...commandPaletteActions,
 		...treeAndCompactionActions,
 	};
 
@@ -450,6 +485,8 @@ export function useCatalogStore(store: GuiCatalogStore): CatalogViewState {
 }
 
 function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState {
+	const controlPlaneState = applyControlPlaneEvent(state, event);
+	if (controlPlaneState) return controlPlaneState;
 	if (event._tag === "workspace.catalogUpdated") {
 		return { ...state, workspaceCatalog: event.catalog };
 	}

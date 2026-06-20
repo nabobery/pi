@@ -37,7 +37,73 @@ describe("SettingsBridgeService", () => {
 
 			const trust = await service.getTrustStatus(workspaceIdFromString("workspace-1"));
 
+			expect(trust.options.every((option) => option.id.length > 0)).toBe(true);
 			expect(trust.options.some((option) => option.updates.some((update) => update.decision === null))).toBe(true);
+		} finally {
+			await fixture.dispose();
+		}
+	});
+
+	test("saves trust decisions by resolved option id", async () => {
+		const fixture = await createFixture();
+		try {
+			const service = new SettingsBridgeService({
+				catalogService: fixture.catalogService,
+				getAgentDir: () => fixture.agentDir,
+			});
+			const trust = await service.getTrustStatus(workspaceIdFromString("workspace-1"));
+			const trustOption = trust.options.find((option) => option.trusted);
+			if (!trustOption) throw new Error("Expected a trust option");
+
+			const saved = await service.saveTrustDecision(workspaceIdFromString("workspace-1"), trustOption.id);
+
+			expect(saved.trusted).toBe(true);
+			await expect(
+				service.saveTrustDecision(workspaceIdFromString("workspace-1"), "not-a-real-option"),
+			).rejects.toMatchObject({ _tag: "TrustDecisionInvalid" });
+		} finally {
+			await fixture.dispose();
+		}
+	});
+
+	test("updates focused settings through SettingsManager setters", async () => {
+		const fixture = await createFixture();
+		try {
+			await mkdir(fixture.agentDir, { recursive: true });
+			const service = new SettingsBridgeService({
+				catalogService: fixture.catalogService,
+				getAgentDir: () => fixture.agentDir,
+			});
+
+			const editor = await service.updateCommonSettings(workspaceIdFromString("workspace-1"), {
+				defaultProvider: "openrouter",
+				defaultModel: "anthropic/claude-sonnet-4",
+				defaultThinkingLevel: "medium",
+				enableSkillCommands: false,
+				steeringMode: "one-at-a-time",
+				followUpMode: "all",
+				defaultProjectTrust: "ask",
+				compactionEnabled: true,
+				imageAutoResize: false,
+				imageBlockImages: true,
+				enabledModels: ["openrouter/*"],
+			});
+
+			expect(editor.fields.find((field) => field.key === "defaultProvider")).toMatchObject({
+				effectiveValue: "openrouter",
+				source: "global",
+			});
+			expect(editor.fields.find((field) => field.key === "enableSkillCommands")).toMatchObject({
+				effectiveValue: false,
+				source: "global",
+			});
+			const summary = await service.getSummary(workspaceIdFromString("workspace-1"));
+			expect(summary).toMatchObject({
+				defaultProvider: "openrouter",
+				defaultModel: "anthropic/claude-sonnet-4",
+				defaultThinkingLevel: "medium",
+				enableSkillCommands: false,
+			});
 		} finally {
 			await fixture.dispose();
 		}

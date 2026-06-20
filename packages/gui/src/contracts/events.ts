@@ -6,11 +6,13 @@ import {
 	ExtensionUiStateSnapshot,
 	ModelThinkingSnapshot,
 	QueueSnapshot,
+	ResourceInventorySnapshot,
 	SessionCompactionSnapshot,
 	SessionActivitySnapshot,
 	SessionCatalogSnapshot,
 	SessionSnapshot,
 	SessionTreeSnapshot,
+	SettingsEditorSnapshot,
 	SettingsSummarySnapshot,
 	TimelineSnapshot,
 	TreeNavigationSnapshot,
@@ -220,10 +222,23 @@ export class SettingsSummaryUpdated extends Schema.TaggedClass<SettingsSummaryUp
 	summary: SettingsSummarySnapshot,
 }) {}
 
+export class SettingsEditorUpdated extends Schema.TaggedClass<SettingsEditorUpdated>()("settings.editorUpdated", {
+	...EventBaseFields,
+	editor: SettingsEditorSnapshot,
+}) {}
+
 export class TrustStatusUpdated extends Schema.TaggedClass<TrustStatusUpdated>()("trust.statusUpdated", {
 	...EventBaseFields,
 	status: TrustStatusSnapshot,
 }) {}
+
+export class ResourcesInventoryUpdated extends Schema.TaggedClass<ResourcesInventoryUpdated>()(
+	"resources.inventoryUpdated",
+	{
+		...EventBaseFields,
+		inventory: ResourceInventorySnapshot,
+	},
+) {}
 
 export class ExtensionUiRequested extends Schema.TaggedClass<ExtensionUiRequested>()("extensionUi.requested", {
 	...EventBaseFields,
@@ -285,7 +300,9 @@ export const GuiEvent = Schema.Union(
 	CompactionCancelled,
 	ModelThinkingUpdated,
 	SettingsSummaryUpdated,
+	SettingsEditorUpdated,
 	TrustStatusUpdated,
+	ResourcesInventoryUpdated,
 	ExtensionUiRequested,
 	ExtensionUiResolved,
 	ExtensionUiUpdated,

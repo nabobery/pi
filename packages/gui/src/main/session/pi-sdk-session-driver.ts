@@ -17,10 +17,13 @@ import {
 	SessionTreeLabelUpdateFailed,
 	SessionTreeNavigationFailed,
 	SessionTreeUnavailable,
+	ResourceInventoryReadFailed,
+	ResourceReloadFailed,
 	sessionIdFromString,
 	type ModelOptionSnapshot,
 	type ModelThinkingSnapshot,
 	type QueueSnapshot,
+	type ResourceInventorySnapshot,
 	type SessionCompactionSnapshot,
 	type SessionId,
 	type SessionTreeSnapshot,
@@ -32,6 +35,7 @@ import {
 } from "../../contracts/index.ts";
 import { createRuntimeSessionKey } from "./session-key.ts";
 import { projectQueueRestoreSnapshot, projectQueueSnapshot } from "./queue-projection.ts";
+import { projectResourceInventorySnapshot } from "./resource-inventory-projection.ts";
 import { projectTimelineSnapshot } from "./timeline-projection.ts";
 import type {
 	OpenRuntimeSessionRequest,
@@ -330,6 +334,32 @@ export class PiSdkSessionDriver implements SessionDriver {
 		);
 	}
 
+	async getResourceInventory(handle: RuntimeSessionHandle): Promise<ResourceInventorySnapshot> {
+		const resourceLoader = handle.runtime.services?.resourceLoader;
+		if (!resourceLoader) {
+			throw new ResourceInventoryReadFailed({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				message: "Pi resource loader is not available",
+			});
+		}
+		try {
+			return projectResourceInventorySnapshot({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				extensions: resourceLoader.getExtensions(),
+				skills: resourceLoader.getSkills(),
+			});
+		} catch (error) {
+			throw new ResourceInventoryReadFailed({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				message: "Failed to read Pi resource inventory",
+				cause: getErrorMessage(error),
+			});
+		}
+	}
+
 	async getSlashCommands(handle: RuntimeSessionHandle): Promise<SlashCommandSnapshot[]> {
 		const commands: SlashCommandSnapshot[] = [];
 		for (const command of handle.runtime.session.getCommands?.() ?? []) {
@@ -342,6 +372,28 @@ export class PiSdkSessionDriver implements SessionDriver {
 			});
 		}
 		return commands;
+	}
+
+	async reloadResources(handle: RuntimeSessionHandle): Promise<ResourceInventorySnapshot> {
+		const reload = handle.runtime.session.reload;
+		if (!reload) {
+			throw new ResourceReloadFailed({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				message: "Pi runtime resource reload API is not available",
+			});
+		}
+		try {
+			await reload.call(handle.runtime.session);
+			return this.getResourceInventory(handle);
+		} catch (error) {
+			throw new ResourceReloadFailed({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				message: "Failed to reload Pi runtime resources",
+				cause: getErrorMessage(error),
+			});
+		}
 	}
 
 	async restoreQueuedMessages(handle: RuntimeSessionHandle) {
