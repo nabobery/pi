@@ -95,4 +95,86 @@ describe("FakeSessionDriver", () => {
 			}),
 		).rejects.toThrow("Fake session path must end with a .jsonl session file");
 	});
+
+	test("supports tree navigation, labels, compaction, exports, and slash command snapshots", async () => {
+		const driver = new FakeSessionDriver();
+		const handle = await driver.openSession({
+			workspaceId: workspaceIdFromString("workspace-1"),
+			workspacePath: "/tmp/workspace",
+			sessionFilePath: "/tmp/workspace/.pi/sessions/session-1.jsonl",
+		});
+		const events: string[] = [];
+		driver.subscribe(handle, (event) => events.push(event.type));
+
+		const initialTree = await driver.getTree(handle);
+		expect(initialTree.entries.map((entry) => entry.entryId)).toContain("fake-user-1");
+		expect(handle.sessionManager.getEntry?.("fake-user-1")).toMatchObject({ id: "fake-user-1" });
+		const labelledTree = await driver.setTreeEntryLabel(handle, "fake-user-1", " start ");
+		expect(labelledTree.entries.find((entry) => entry.entryId === "fake-user-1")).toMatchObject({ label: "start" });
+		const unlabelledTree = await driver.setTreeEntryLabel(handle, "fake-user-1", "");
+		expect(unlabelledTree.entries.find((entry) => entry.entryId === "fake-user-1")?.label).toBeUndefined();
+
+		await expect(
+			driver.navigateTree(handle, {
+				targetEntryId: "fake-user-1",
+				summaryMode: "custom",
+				customInstructions: "summarize branch",
+			}),
+		).resolves.toMatchObject({
+			clearsComposer: false,
+			editorText: "Fake user prompt",
+		});
+		await expect(
+			driver.navigateTree(handle, { targetEntryId: "fake-assistant-1", summaryMode: "none" }),
+		).resolves.toMatchObject({
+			clearsComposer: true,
+		});
+		await expect(driver.navigateTree(handle, { targetEntryId: "missing", summaryMode: "none" })).rejects.toThrow(
+			"Entry missing not found",
+		);
+		await expect(driver.setTreeEntryLabel(handle, "missing", "x")).rejects.toThrow("Entry missing not found");
+
+		await expect(driver.compact(handle, "keep important facts")).resolves.toMatchObject({
+			cancelled: false,
+			firstKeptEntryId: "fake-entry-1",
+			summary: "Compacted: keep important facts",
+			tokensBefore: 1200,
+		});
+		await driver.cancelCompaction();
+		await driver.cancelTreeNavigation();
+		await expect(driver.exportSession(handle, { format: "html" })).resolves.toMatchObject({
+			format: "html",
+			outputPath: "/tmp/pi-gui-fake-session.html",
+		});
+		await expect(
+			driver.exportSession(handle, { format: "jsonl", outputPath: "/tmp/custom.jsonl" }),
+		).resolves.toMatchObject({
+			format: "jsonl",
+			outputPath: "/tmp/custom.jsonl",
+		});
+		await expect(driver.getSlashCommands()).resolves.toEqual([
+			expect.objectContaining({ availability: "sendable", name: "fake-extension" }),
+			expect.objectContaining({ availability: "insertOnly", name: "fake-prompt" }),
+			expect.objectContaining({ availability: "sendable", name: "skill:fake-skill" }),
+		]);
+		expect(events).toContain("compaction_start");
+		expect(events).toContain("compaction_end");
+	});
+
+	test("rejects closed fake runtime handles and closes active runs", async () => {
+		const driver = new FakeSessionDriver();
+		const handle = await driver.openSession({
+			workspaceId: workspaceIdFromString("workspace-1"),
+			workspacePath: "/tmp/workspace",
+			sessionFilePath: "/tmp/workspace/.pi/sessions/session-1.jsonl",
+		});
+
+		const delayed = await driver.sendMessage(handle, { message: FAKE_RUNTIME_PROMPTS.delay });
+		await driver.closeSession(handle);
+
+		await expect(delayed.completion).rejects.toThrow("Fake session closed");
+		await expect(driver.getTranscript(handle)).rejects.toThrow(
+			"Fake session runtime workspace-1:session-1 is not open",
+		);
+	});
 });

@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { ArtifactNotFound, ArtifactOpenFailed, isAllowedExternalArtifactUrl } from "../../contracts/index.ts";
+import { ArtifactNotFound, ArtifactOpenFailed } from "../../contracts/index.ts";
+import { createExternalArtifactUrlPolicy, type ExternalArtifactUrlPolicy } from "./artifact-url-policy.ts";
 
 export interface ArtifactShellAdapter {
 	openExternal(url: string): Promise<void>;
 	openPath(path: string): Promise<string>;
 	showItemInFolder(path: string): void;
+}
+
+export interface ArtifactServiceOptions {
+	isAllowedExternalUrl?: ExternalArtifactUrlPolicy;
+	shell: ArtifactShellAdapter;
 }
 
 interface FileArtifact {
@@ -23,9 +29,11 @@ type Artifact = FileArtifact | ExternalArtifact;
 
 export class ArtifactService {
 	private readonly artifacts = new Map<string, Artifact>();
+	private readonly isAllowedExternalUrl: ExternalArtifactUrlPolicy;
 	private readonly shell: ArtifactShellAdapter;
 
-	constructor(options: { shell: ArtifactShellAdapter }) {
+	constructor(options: ArtifactServiceOptions) {
+		this.isAllowedExternalUrl = options.isAllowedExternalUrl ?? createExternalArtifactUrlPolicy();
 		this.shell = options.shell;
 	}
 
@@ -36,7 +44,7 @@ export class ArtifactService {
 	}
 
 	trackExternal(url: string): string {
-		if (!isAllowedExternalArtifactUrl(url)) {
+		if (!this.isAllowedExternalUrl(url)) {
 			throw new ArtifactOpenFailed({ artifactId: "untracked", message: "External artifact URL is not allowed" });
 		}
 		const id = `artifact-${randomUUID()}`;

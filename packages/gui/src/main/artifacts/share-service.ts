@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getShareViewerUrl } from "@earendil-works/pi-coding-agent/runtime";
 import {
-	isAllowedExternalArtifactUrl,
 	SessionShareAuthFailed,
 	SessionShareFailed,
 	SessionShareUnavailable,
@@ -13,6 +12,11 @@ import {
 	type SessionShareSnapshot,
 	type WorkspaceId,
 } from "../../contracts/index.ts";
+import {
+	createExternalArtifactUrlPolicy,
+	type ExternalArtifactUrlPolicy,
+	type ShareViewerUrlFactory,
+} from "./artifact-url-policy.ts";
 
 const SHARE_COMMAND_TIMEOUT_MS = 30_000;
 const MAX_SHARE_COMMAND_OUTPUT_BYTES = 64 * 1024;
@@ -28,15 +32,20 @@ export interface ShareCommandResult {
 export type ShareCommandRunner = (command: string, args: readonly string[]) => Promise<ShareCommandResult>;
 
 export interface ShareServiceOptions {
+	getShareViewerUrl?: ShareViewerUrlFactory;
 	runCommand?: ShareCommandRunner;
 	trackExternal(url: string): string;
 }
 
 export class ShareService {
+	private readonly getShareViewerUrl: ShareViewerUrlFactory;
+	private readonly isAllowedPreviewUrl: ExternalArtifactUrlPolicy;
 	private readonly runCommand: ShareCommandRunner;
 	private readonly trackExternal: (url: string) => string;
 
 	constructor(options: ShareServiceOptions) {
+		this.getShareViewerUrl = options.getShareViewerUrl ?? getShareViewerUrl;
+		this.isAllowedPreviewUrl = createExternalArtifactUrlPolicy({ getShareViewerUrl: this.getShareViewerUrl });
 		this.runCommand = options.runCommand ?? runProcess;
 		this.trackExternal = options.trackExternal;
 	}
@@ -91,8 +100,8 @@ export class ShareService {
 					cause: gistUrl,
 				});
 			}
-			const previewUrl = getShareViewerUrl(gistId);
-			if (!isAllowedExternalArtifactUrl(previewUrl)) {
+			const previewUrl = this.getShareViewerUrl(gistId);
+			if (!this.isAllowedPreviewUrl(previewUrl)) {
 				throw new SessionShareFailed({
 					workspaceId: request.workspaceId,
 					sessionId: request.sessionId,

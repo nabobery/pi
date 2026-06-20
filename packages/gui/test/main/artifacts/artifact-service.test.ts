@@ -26,6 +26,28 @@ describe("ArtifactService", () => {
 		expect(() => service.trackExternal("javascript:alert(1)")).toThrow(ArtifactOpenFailed);
 	});
 
+	test("rejects arbitrary HTTPS external artifacts", () => {
+		const service = new ArtifactService({ shell: createShell() });
+
+		expect(() => service.trackExternal("https://example.com/session/#abc123")).toThrow(ArtifactOpenFailed);
+		expect(() => service.trackExternal("https://pi.dev/not-session/#abc123")).toThrow(ArtifactOpenFailed);
+		expect(() => service.trackExternal("https://pi.dev/session/")).toThrow(ArtifactOpenFailed);
+	});
+
+	test("allows injected external URL policies", async () => {
+		const shell = createShell();
+		const service = new ArtifactService({
+			shell,
+			isAllowedExternalUrl: (url) => url === "https://share.local/session/#abc123",
+		});
+		const artifactId = service.trackExternal("https://share.local/session/#abc123");
+
+		await service.openExternal(artifactId);
+
+		expect(shell.openExternal).toHaveBeenCalledWith("https://share.local/session/#abc123");
+		expect(() => service.trackExternal("https://pi.dev/session/#abc123")).toThrow(ArtifactOpenFailed);
+	});
+
 	test("rejects missing artifacts and wrong artifact kinds", async () => {
 		const service = new ArtifactService({ shell: createShell() });
 		const fileArtifactId = service.trackFile("/tmp/session.html");

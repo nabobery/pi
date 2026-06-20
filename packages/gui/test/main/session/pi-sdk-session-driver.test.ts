@@ -1,9 +1,21 @@
 import { describe, expect, test, vi } from "vitest";
 import type { Api, Model } from "@earendil-works/pi-coding-agent/runtime";
 import {
+	ResourceInventoryReadFailed,
+	ResourceReloadFailed,
+	SessionCompactFailed,
+	SessionCompactionNotActive,
+	SessionExportUnavailable,
+	SessionModelAuthUnavailable,
+	SessionModelNotFound,
+	SessionQueueRestoreFailed,
 	SessionRuntimeCloseFailed,
 	SessionRuntimeOpenFailed,
+	SessionThinkingSetFailed,
 	SessionTranscriptReadFailed,
+	SessionTreeLabelUpdateFailed,
+	SessionTreeNavigationFailed,
+	SessionTreeUnavailable,
 	sessionIdFromString,
 	workspaceIdFromString,
 } from "../../../src/contracts/index.ts";
@@ -261,6 +273,161 @@ describe("PiSdkSessionDriver", () => {
 			modelId: "reasoning-model",
 			availableThinkingLevels: ["off", "low", "medium", "high", "xhigh"],
 		});
+	});
+
+	test("projects queue, slash commands, exports, tree navigation, compaction, and labels", async () => {
+		const handle = createRuntimeHandle({});
+		handle.sessionManager.getEntries = vi.fn(() => [
+			{ id: "assistant-1", message: { role: "assistant", content: "done" } },
+		]);
+		handle.sessionManager.getTree = vi.fn(() => [
+			{
+				entry: { uuid: "user-1", type: "message", role: "user", content: "hello" },
+				children: [
+					{ entry: { uuid: "assistant-1", type: "message", role: "assistant", content: "done" }, children: [] },
+				],
+			},
+		]);
+		handle.sessionManager.getLeafId = vi.fn(() => "assistant-1");
+		handle.sessionManager.getLabel = vi.fn((entryId) => (entryId === "user-1" ? "start" : undefined));
+		handle.sessionManager.appendLabelChange = vi.fn(() => "label-entry");
+		handle.runtime.session.getSteeringMessages = vi.fn(() => ["steer"]);
+		handle.runtime.session.getFollowUpMessages = vi.fn(() => ["follow"]);
+		handle.runtime.session.getCommands = vi.fn(() => [
+			{
+				name: "prompt",
+				description: "Prompt",
+				source: "prompt" as const,
+				sourceInfo: {
+					path: "/tmp/prompt.md",
+					source: "prompt",
+					scope: "project" as const,
+					origin: "top-level" as const,
+				},
+			},
+			{
+				name: "tool",
+				source: "extension" as const,
+				sourceInfo: { path: "/tmp/ext", source: "ext", scope: "project" as const, origin: "top-level" as const },
+			},
+		]);
+		handle.runtime.session.navigateTree = vi.fn(async () => ({
+			aborted: true,
+			cancelled: false,
+			editorText: "draft",
+			summaryEntry: { id: "summary-1" },
+		}));
+		handle.runtime.session.compact = vi.fn(async () => ({
+			firstKeptEntryId: "assistant-1",
+			summary: "summary",
+			tokensBefore: 100,
+		}));
+		handle.runtime.session.exportToHtml = vi.fn(async (outputPath?: string) => outputPath ?? "/tmp/session.html");
+		handle.runtime.session.exportToJsonl = vi.fn((outputPath?: string) => outputPath ?? "/tmp/session.jsonl");
+		const driver = new PiSdkSessionDriver({
+			openSessionManager: vi.fn(),
+			runtimeSupervisor: { createRuntime: vi.fn() },
+		});
+
+		await expect(driver.getQueue(handle)).resolves.toMatchObject({ steeringCount: 1, followUpCount: 1 });
+		await expect(driver.getSlashCommands(handle)).resolves.toEqual([
+			expect.objectContaining({ availability: "insertOnly", name: "prompt" }),
+			expect.objectContaining({ availability: "sendable", name: "tool" }),
+		]);
+		await expect(driver.getTree(handle)).resolves.toMatchObject({ leafEntryId: "assistant-1" });
+		await expect(
+			driver.navigateTree(handle, { targetEntryId: "user-1", summaryMode: "custom", customInstructions: "keep" }),
+		).resolves.toMatchObject({
+			aborted: true,
+			clearsComposer: false,
+			editorText: "draft",
+			summaryEntryId: "summary-1",
+		});
+		await expect(driver.setTreeEntryLabel(handle, "user-1", " label ")).resolves.toMatchObject({
+			leafEntryId: "assistant-1",
+		});
+		await expect(driver.compact(handle, "custom")).resolves.toMatchObject({
+			firstKeptEntryId: "assistant-1",
+			summary: "summary",
+			tokensBefore: 100,
+		});
+		await expect(
+			driver.exportSession(handle, { format: "html", outputPath: "/tmp/out.html" }),
+		).resolves.toMatchObject({
+			format: "html",
+			outputPath: "/tmp/out.html",
+		});
+		await expect(driver.exportSession(handle, { format: "jsonl" })).resolves.toMatchObject({
+			format: "jsonl",
+			outputPath: "/tmp/session.jsonl",
+		});
+	});
+
+	test("maps runtime adapter failures for tree, export, compaction, queue, resources, and thinking", async () => {
+		const handle = createRuntimeHandle({});
+		const driver = new PiSdkSessionDriver({
+			openSessionManager: vi.fn(),
+			runtimeSupervisor: { createRuntime: vi.fn() },
+		});
+
+		await expect(driver.getTree(handle)).rejects.toBeInstanceOf(SessionTreeUnavailable);
+		await expect(
+			driver.navigateTree(handle, { targetEntryId: "entry-1", summaryMode: "none" }),
+		).rejects.toBeInstanceOf(SessionTreeNavigationFailed);
+		await expect(driver.setTreeEntryLabel(handle, "entry-1", "label")).rejects.toBeInstanceOf(
+			SessionTreeLabelUpdateFailed,
+		);
+		await expect(driver.compact(handle, undefined)).rejects.toBeInstanceOf(SessionCompactFailed);
+		await expect(driver.exportSession(handle, { format: "html" })).rejects.toBeInstanceOf(SessionExportUnavailable);
+		await expect(driver.cancelCompaction(handle)).rejects.toBeInstanceOf(SessionCompactionNotActive);
+		await expect(driver.cancelTreeNavigation(handle)).rejects.toBeInstanceOf(SessionTreeNavigationFailed);
+		await expect(driver.getResourceInventory(handle)).rejects.toBeInstanceOf(ResourceInventoryReadFailed);
+		await expect(driver.reloadResources(handle)).rejects.toBeInstanceOf(ResourceReloadFailed);
+
+		handle.runtime.session.clearQueue = vi.fn(() => {
+			throw new Error("queue failed");
+		});
+		await expect(driver.restoreQueuedMessages(handle)).rejects.toBeInstanceOf(SessionQueueRestoreFailed);
+
+		handle.runtime.session.setThinkingLevel = vi.fn(() => {
+			throw new Error("thinking failed");
+		});
+		await expect(driver.setThinkingLevel(handle, "high")).rejects.toBeInstanceOf(SessionThinkingSetFailed);
+	});
+
+	test("sets models only when registry and auth allow it", async () => {
+		const model = createModel({ id: "model-a", provider: "openai", reasoning: true });
+		const handle = createRuntimeHandle({});
+		const driver = new PiSdkSessionDriver({
+			openSessionManager: vi.fn(),
+			runtimeSupervisor: { createRuntime: vi.fn() },
+		});
+
+		await expect(driver.setModel(handle, "openai", "model-a")).rejects.toBeInstanceOf(SessionModelNotFound);
+		handle.runtime.services = {
+			modelRegistry: {
+				find: vi.fn(() => undefined),
+				getAll: vi.fn(() => [model]),
+				hasConfiguredAuth: vi.fn(() => true),
+			},
+		};
+		await expect(driver.setModel(handle, "openai", "model-a")).rejects.toBeInstanceOf(SessionModelNotFound);
+		handle.runtime.services.modelRegistry = {
+			find: vi.fn(() => model),
+			getAll: vi.fn(() => [model]),
+			hasConfiguredAuth: vi.fn(() => false),
+		};
+		await expect(driver.setModel(handle, "openai", "model-a")).rejects.toBeInstanceOf(SessionModelAuthUnavailable);
+		handle.runtime.services.modelRegistry = {
+			find: vi.fn(() => model),
+			getAll: vi.fn(() => [model]),
+			hasConfiguredAuth: vi.fn(() => true),
+		};
+
+		const snapshot = await driver.setModel(handle, "openai", "model-a");
+
+		expect(handle.runtime.session.setModel).toHaveBeenCalledWith(model);
+		expect(snapshot.models[0]).toMatchObject({ authAvailable: true, modelId: "model-a", supportsThinking: true });
 	});
 });
 

@@ -30,6 +30,49 @@ describe("ShareService", () => {
 		expect(trackExternal).toHaveBeenCalledWith("https://pi.dev/session/#abc123");
 	});
 
+	test("supports injected share preview URL generation", async () => {
+		const runCommand: ShareCommandRunner = async (_command, args) =>
+			args[0] === "auth"
+				? { code: 0, stdout: "", stderr: "" }
+				: { code: 0, stdout: "https://gist.github.com/user/abc123\n", stderr: "" };
+		const trackExternal = vi.fn((url: string) => `artifact:${url}`);
+		const service = new ShareService({
+			runCommand,
+			trackExternal,
+			getShareViewerUrl: (gistId) => `https://share.local/session/#${gistId}`,
+		});
+
+		const shared = await service.share({
+			workspaceId,
+			sessionId,
+			exportHtml: async (outputPath) => outputPath,
+		});
+
+		expect(shared.previewUrl).toBe("https://share.local/session/#abc123");
+		expect(trackExternal).toHaveBeenCalledWith("https://share.local/session/#abc123");
+	});
+
+	test("rejects malformed generated share preview URLs", async () => {
+		const runCommand: ShareCommandRunner = async (_command, args) =>
+			args[0] === "auth"
+				? { code: 0, stdout: "", stderr: "" }
+				: { code: 0, stdout: "https://gist.github.com/user/abc123\n", stderr: "" };
+		const trackExternal = vi.fn((url: string) => `artifact:${url}`);
+		const service = new ShareService({
+			runCommand,
+			trackExternal,
+			getShareViewerUrl: (gistId) => `http://share.local/session/#${gistId}`,
+		});
+
+		await expect(
+			service.share({ workspaceId, sessionId, exportHtml: async (outputPath) => outputPath }),
+		).rejects.toMatchObject({
+			message: "Share preview URL is not allowed",
+			cause: "http://share.local/session/#abc123",
+		});
+		expect(trackExternal).not.toHaveBeenCalled();
+	});
+
 	test("reports missing GitHub CLI as share unavailable", async () => {
 		const service = new ShareService({
 			runCommand: async () => ({ code: 1, errorCode: "ENOENT", stdout: "", stderr: "missing" }),
