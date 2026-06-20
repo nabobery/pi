@@ -3,6 +3,7 @@ import {
 	type ModelThinkingSnapshot,
 	type QueueRestoreSnapshot,
 	type QueueSnapshot,
+	type SessionExportSnapshot,
 	type SessionId,
 	type SessionTreeSnapshot,
 	type SlashCommandSnapshot,
@@ -268,6 +269,18 @@ export class FakeSessionDriver implements SessionDriver {
 		return;
 	}
 
+	async exportSession(
+		handle: RuntimeSessionHandle,
+		request: { format: "html" | "jsonl"; outputPath?: string },
+	): Promise<Omit<SessionExportSnapshot, "artifactId" | "createdAt">> {
+		return {
+			workspaceId: handle.workspaceId,
+			sessionId: handle.sessionId,
+			format: request.format,
+			outputPath: request.outputPath ?? `/tmp/pi-gui-fake-session.${request.format === "html" ? "html" : "jsonl"}`,
+		};
+	}
+
 	async getQueue(handle: RuntimeSessionHandle): Promise<QueueSnapshot> {
 		const state = this.requireState(handle);
 		return queueSnapshot(handle, state);
@@ -507,6 +520,8 @@ function createFakeRuntime(state: FakeRuntimeState): ManagedAgentRuntime {
 			return { cancelled: false };
 		},
 		prompt: async () => undefined,
+		exportToHtml: async (outputPath) => outputPath ?? "/tmp/pi-gui-fake-session.html",
+		exportToJsonl: (outputPath) => outputPath ?? "/tmp/pi-gui-fake-session.jsonl",
 		abortCompaction: () => undefined,
 		abortBranchSummary: () => undefined,
 		setModel: async () => undefined,

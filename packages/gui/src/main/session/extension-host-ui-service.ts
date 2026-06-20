@@ -53,6 +53,10 @@ interface ExtensionUiRequestPayload {
 	timeoutMs?: number;
 }
 
+interface SafeWidgetOptions {
+	placement?: "aboveEditor" | "belowEditor";
+}
+
 export class ExtensionHostUiService {
 	private readonly eventBus: ExtensionHostEventBus;
 	private readonly pending = new Map<string, PendingRequest>();
@@ -86,7 +90,7 @@ export class ExtensionHostUiService {
 			setWorkingIndicator: (_options?: WorkingIndicatorOptions) =>
 				this.publishCompatibilityIssue(workspaceId, sessionId, "setWorkingIndicator"),
 			setHiddenThinkingLabel: () => this.publishCompatibilityIssue(workspaceId, sessionId, "setHiddenThinkingLabel"),
-			setWidget: () => this.publishCompatibilityIssue(workspaceId, sessionId, "setWidget"),
+			setWidget: (key, content, options) => this.setWidget(workspaceId, sessionId, key, content, options),
 			setFooter: () => this.publishCompatibilityIssue(workspaceId, sessionId, "setFooter"),
 			setHeader: () => this.publishCompatibilityIssue(workspaceId, sessionId, "setHeader"),
 			setTitle: (title) => {
@@ -271,6 +275,29 @@ export class ExtensionHostUiService {
 		this.publishUpdate(workspaceId, sessionId, { kind: "editorText", editorText: text });
 	}
 
+	private setWidget(
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		key: string,
+		content: unknown,
+		options: SafeWidgetOptions | undefined,
+	): void {
+		const lines = normalizeWidgetLines(content);
+		if (!lines) {
+			this.publishCompatibilityIssue(workspaceId, sessionId, "setWidget");
+			return;
+		}
+		this.publishUpdate(workspaceId, sessionId, {
+			kind: "widget",
+			widget: {
+				key,
+				lines,
+				placement: options?.placement ?? "aboveEditor",
+				updatedAt: new Date().toISOString(),
+			},
+		});
+	}
+
 	private getEditorText(workspaceId: WorkspaceId, sessionId: SessionId): string {
 		return this.editorTextBySession.get(createRuntimeSessionKey(workspaceId, sessionId)) ?? "";
 	}
@@ -312,6 +339,18 @@ function responseValue(response: ExtensionUiResponse): unknown {
 function cancelledValue(kind: ExtensionUiResponse["kind"]): unknown {
 	if (kind === "confirm") return false;
 	return undefined;
+}
+
+function normalizeWidgetLines(content: unknown): string[] | undefined {
+	if (content === undefined) return [];
+	if (typeof content === "string") return content.split(/\r?\n/);
+	if (!Array.isArray(content)) return undefined;
+	const lines: string[] = [];
+	for (const line of content) {
+		if (typeof line !== "string") return undefined;
+		lines.push(line);
+	}
+	return lines;
 }
 
 function createUnsupportedTheme(onRead: () => void): unknown {

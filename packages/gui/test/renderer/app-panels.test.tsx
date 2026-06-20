@@ -47,9 +47,14 @@ describe("renderer app panels", () => {
 		const ready = renderPanel(
 			<Composer
 				appMode="test"
+				attachments={undefined}
 				draft="hello"
+				imagesBlocked={false}
 				onCancel={cancel}
 				onDraftChange={draftChange}
+				onPasteImage={vi.fn()}
+				onPickImages={vi.fn()}
+				onRemoveImage={vi.fn()}
 				onSend={send}
 				selectedSession={session("ready")}
 			/>,
@@ -64,9 +69,14 @@ describe("renderer app panels", () => {
 		const running = renderPanel(
 			<Composer
 				appMode="test"
+				attachments={undefined}
 				draft="next"
+				imagesBlocked={false}
 				onCancel={cancel}
 				onDraftChange={draftChange}
+				onPasteImage={vi.fn()}
+				onPickImages={vi.fn()}
+				onRemoveImage={vi.fn()}
 				onSend={send}
 				selectedSession={session("running")}
 			/>,
@@ -79,6 +89,55 @@ describe("renderer app panels", () => {
 		expect(send).toHaveBeenCalledWith("steer");
 		expect(send).toHaveBeenCalledWith("followUp");
 		expect(cancel).toHaveBeenCalledOnce();
+	});
+
+	test("composer renders image attachments and routes image actions", async () => {
+		const pick = vi.fn();
+		const paste = vi.fn();
+		const remove = vi.fn();
+		const send = vi.fn();
+		const mounted = renderPanel(
+			<Composer
+				appMode="test"
+				attachments={{
+					workspaceId,
+					sessionId,
+					attachments: [
+						{
+							id: "image-1",
+							workspaceId,
+							sessionId,
+							source: "file",
+							fileName: "screen.png",
+							mimeType: "image/png",
+							sizeBytes: 12,
+							previewDataUrl: "data:image/png;base64,abcd",
+							createdAt: "2026-06-20T00:00:00.000Z",
+						},
+					],
+				}}
+				draft=""
+				imagesBlocked={false}
+				onCancel={vi.fn()}
+				onDraftChange={vi.fn()}
+				onPasteImage={paste}
+				onPickImages={pick}
+				onRemoveImage={remove}
+				onSend={send}
+				selectedSession={session("ready")}
+			/>,
+		);
+
+		expect(mounted.container.textContent).toContain("screen.png");
+		await click(buttonByText(mounted.container, "Add image"));
+		await click(buttonByText(mounted.container, "Paste image"));
+		await click(buttonByText(mounted.container, "Remove"));
+		await submit(form(mounted.container));
+
+		expect(pick).toHaveBeenCalledOnce();
+		expect(paste).toHaveBeenCalledOnce();
+		expect(remove).toHaveBeenCalledWith("image-1");
+		expect(send).toHaveBeenCalledWith();
 	});
 
 	test("runtime controls preserve model IDs containing slashes and ignore unavailable runtime changes", async () => {
@@ -214,6 +273,14 @@ describe("renderer app panels", () => {
 					],
 					statuses: { build: "running" },
 					title: "Extension Title",
+					widgets: {
+						widget: {
+							key: "widget",
+							lines: ["line one", "line two"],
+							placement: "aboveEditor",
+							updatedAt: "2026-06-20T00:00:00.000Z",
+						},
+					},
 					compatibilityIssues: ["Unsupported manifest version"],
 				}}
 			/>,
@@ -222,6 +289,7 @@ describe("renderer app panels", () => {
 		expect(mounted.container.textContent).toContain("Extension Title");
 		expect(mounted.container.textContent).toContain("build: running");
 		expect(mounted.container.textContent).toContain("Extension notice");
+		expect(mounted.container.textContent).toContain("line one");
 		expect(mounted.container.textContent).toContain("Unsupported manifest version");
 	});
 
@@ -537,6 +605,15 @@ function storeStub(): GuiCatalogStore {
 		searchResume: vi.fn().mockResolvedValue(undefined),
 		selectWorkspace: vi.fn().mockResolvedValue(undefined),
 		sendMessage: vi.fn().mockResolvedValue(true),
+		pickImages: vi.fn().mockResolvedValue(undefined),
+		pasteImageFromClipboard: vi.fn().mockResolvedValue(undefined),
+		removeImageAttachment: vi.fn().mockResolvedValue(undefined),
+		clearImageAttachments: vi.fn().mockResolvedValue(undefined),
+		exportSession: vi.fn().mockResolvedValue(undefined),
+		shareSession: vi.fn().mockResolvedValue(undefined),
+		openArtifact: vi.fn().mockResolvedValue(undefined),
+		revealArtifact: vi.fn().mockResolvedValue(undefined),
+		openExternalArtifact: vi.fn().mockResolvedValue(undefined),
 		setComposerDraft: vi.fn(),
 		setCommandPaletteQuery: vi.fn(),
 		setCommandPaletteSelectedIndex: vi.fn(),

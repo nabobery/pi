@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type {
 	ExtensionUiRequestSnapshot,
+	ImageAttachmentListSnapshot,
 	ModelThinkingSnapshot,
 	QueueSnapshot,
 	SessionId,
+	SessionExportSnapshot,
+	SessionShareSnapshot,
 	SessionSnapshot,
 	WorkspaceId,
 } from "../../contracts/index.ts";
 import type { CatalogViewState, GuiCatalogStore } from "./app-store.ts";
+import { emptySessionArtifactOperationState, type SessionArtifactOperationState } from "./desktop-artifacts-store.ts";
 
 type CatalogState = CatalogViewState;
 
@@ -84,13 +88,23 @@ export function Composer({
 	draft,
 	onCancel,
 	onDraftChange,
+	onPasteImage,
+	onPickImages,
+	onRemoveImage,
 	onSend,
 	selectedSession,
+	attachments,
+	imagesBlocked,
 }: {
 	appMode: string;
 	draft: string;
+	attachments: ImageAttachmentListSnapshot | undefined;
+	imagesBlocked: boolean;
 	onCancel(): void;
 	onDraftChange(value: string): void;
+	onPasteImage(): void;
+	onPickImages(): void;
+	onRemoveImage(attachmentId: string): void;
 	onSend(deliveryMode?: "steer" | "followUp"): void;
 	selectedSession: SessionSnapshot | undefined;
 }) {
@@ -98,7 +112,10 @@ export function Composer({
 		selectedSession?.status === "ready" ||
 		selectedSession?.status === "running" ||
 		selectedSession?.status === "cancelling";
-	const canSend = Boolean(selectedSession && canEditComposer && draft.trim());
+	const attachedImages = attachments?.attachments ?? [];
+	const canSend = Boolean(
+		selectedSession && canEditComposer && (draft.trim() || (!imagesBlocked && attachedImages.length > 0)),
+	);
 	const isRunning = selectedSession?.status === "running";
 	const isCancelling = selectedSession?.status === "cancelling";
 
@@ -117,9 +134,28 @@ export function Composer({
 				value={draft}
 				onChange={(event) => onDraftChange(event.currentTarget.value)}
 			/>
+			{attachedImages.length > 0 ? (
+				<div className="attachment-strip" aria-label="Image attachments">
+					{attachedImages.map((attachment) => (
+						<div className="attachment-chip" key={attachment.id}>
+							<img alt="" src={attachment.previewDataUrl} />
+							<span>{attachment.fileName ?? attachment.source}</span>
+							<button type="button" onClick={() => onRemoveImage(attachment.id)}>
+								Remove
+							</button>
+						</div>
+					))}
+				</div>
+			) : null}
 			<div className="composer-status">
 				<span>Mode: {appMode}</span>
 				<div className="composer-actions">
+					<button type="button" disabled={!selectedSession || imagesBlocked} onClick={onPickImages}>
+						Add image
+					</button>
+					<button type="button" disabled={!selectedSession || imagesBlocked} onClick={onPasteImage}>
+						Paste image
+					</button>
 					{isRunning || isCancelling ? (
 						<>
 							<button type="button" disabled={!canSend || isCancelling} onClick={() => onSend("steer")}>
@@ -140,6 +176,63 @@ export function Composer({
 				</div>
 			</div>
 		</form>
+	);
+}
+
+export function SessionArtifactPanel({
+	exported,
+	onExport,
+	onOpenArtifact,
+	onOpenShare,
+	onRevealArtifact,
+	onShare,
+	operationState,
+	shared,
+}: {
+	exported: SessionExportSnapshot | undefined;
+	onExport(format: "html" | "jsonl"): void;
+	onOpenArtifact(artifactId: string): void;
+	onOpenShare(artifactId: string): void;
+	onRevealArtifact(artifactId: string): void;
+	onShare(): void;
+	operationState: SessionArtifactOperationState | undefined;
+	shared: SessionShareSnapshot | undefined;
+}) {
+	const state = operationState ?? emptySessionArtifactOperationState();
+	return (
+		<div className="artifact-actions" aria-label="Export and share">
+			<button type="button" disabled={state.exporting || state.sharing} onClick={() => onExport("html")}>
+				Export HTML
+			</button>
+			<button type="button" disabled={state.exporting || state.sharing} onClick={() => onExport("jsonl")}>
+				Export JSONL
+			</button>
+			<button type="button" disabled={state.exporting || state.sharing} onClick={onShare}>
+				Share
+			</button>
+			{state.exporting ? <span className="inline-status">Exporting.</span> : null}
+			{state.sharing ? <span className="inline-status">Sharing.</span> : null}
+			{state.error ? <span className="inline-error">{state.error}</span> : null}
+			{exported ? (
+				<>
+					<button type="button" onClick={() => onOpenArtifact(exported.artifactId)}>
+						Open export
+					</button>
+					<button type="button" onClick={() => onRevealArtifact(exported.artifactId)}>
+						Reveal export
+					</button>
+				</>
+			) : null}
+			{shared?.artifactId ? <OpenShareButton artifactId={shared.artifactId} onOpenShare={onOpenShare} /> : null}
+		</div>
+	);
+}
+
+function OpenShareButton({ artifactId, onOpenShare }: { artifactId: string; onOpenShare(artifactId: string): void }) {
+	return (
+		<button type="button" onClick={() => onOpenShare(artifactId)}>
+			Open share
+		</button>
 	);
 }
 
@@ -259,6 +352,7 @@ export function ExtensionUiInlineState({
 	extensionUi: NonNullable<CatalogState["extensionUiBySessionKey"][string]>;
 }) {
 	const statuses = Object.entries(extensionUi.statuses);
+	const widgets = Object.values(extensionUi.widgets);
 	return (
 		<div className="extension-strip">
 			{extensionUi.title ? <p>{extensionUi.title}</p> : null}
@@ -271,6 +365,11 @@ export function ExtensionUiInlineState({
 				<p key={`${notification.kind}:${notification.notifyType ?? "info"}:${notification.message ?? ""}`}>
 					{notification.message}
 				</p>
+			))}
+			{widgets.map((widget) => (
+				<pre key={widget.key} className="extension-widget">
+					{widget.lines.join("\n")}
+				</pre>
 			))}
 			{extensionUi.compatibilityIssues.map((message) => (
 				<p key={message} className="inline-error">

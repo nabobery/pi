@@ -4,6 +4,13 @@ import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import {
 	AppBootstrap,
+	ArtifactOpen,
+	ArtifactOpenExternal,
+	ArtifactReveal,
+	ComposerClearImageAttachments,
+	ComposerPasteImageFromClipboard,
+	ComposerPickImages,
+	ComposerRemoveImageAttachment,
 	ExtensionUiUpdateEditorText,
 	SessionCompact,
 	SessionArchive,
@@ -13,6 +20,7 @@ import {
 	SessionCancelTreeNavigation,
 	SessionClose,
 	SessionCreate,
+	SessionExport,
 	SessionGetTranscript,
 	SessionGetTree,
 	SessionNavigateTree,
@@ -21,6 +29,7 @@ import {
 	SessionRestoreQueuedMessages,
 	SessionSendMessage,
 	SessionSetTreeEntryLabel,
+	SessionShare,
 	SessionUnarchive,
 	type SessionTreeSnapshot,
 	type TimelineSnapshot,
@@ -184,6 +193,7 @@ describe("createGuiInvokeHandler", () => {
 			closeSession: vi.fn(async () => undefined),
 			compact: vi.fn(),
 			createSession: vi.fn(async () => sessions),
+			exportSession: vi.fn(),
 			getModelThinking: vi.fn(),
 			getTree: vi.fn(),
 			getTranscript: vi.fn(
@@ -276,6 +286,7 @@ describe("createGuiInvokeHandler", () => {
 				cancelled: false,
 			})),
 			createSession: vi.fn(),
+			exportSession: vi.fn(),
 			getModelThinking: vi.fn(),
 			getTree: vi.fn(async () => tree),
 			getTranscript: vi.fn(),
@@ -401,6 +412,7 @@ describe("createGuiInvokeHandler", () => {
 				cancelRun: vi.fn(async () => undefined),
 				closeSession: vi.fn(async () => undefined),
 				createSession: vi.fn(async () => sessions),
+				exportSession: vi.fn(),
 				getModelThinking: vi.fn(),
 				getTranscript: vi.fn(),
 				openSession: vi.fn(async () => sessions),
@@ -413,6 +425,7 @@ describe("createGuiInvokeHandler", () => {
 			},
 			settingsBridgeService: {
 				getEditorSnapshot: vi.fn(),
+				getImageSettings: vi.fn(async () => ({ autoResize: false, blockImages: false })),
 				getSummary: vi.fn(async () => {
 					throw new Error("settings unavailable");
 				}),
@@ -474,6 +487,7 @@ describe("createGuiInvokeHandler", () => {
 			policy,
 			settingsBridgeService: {
 				getEditorSnapshot: vi.fn(async () => editor),
+				getImageSettings: vi.fn(async () => ({ autoResize: false, blockImages: false })),
 				getSummary: vi.fn(async () => summary),
 				getTrustStatus: vi.fn(),
 				openSettingsFile: vi.fn(),
@@ -524,6 +538,7 @@ describe("createGuiInvokeHandler", () => {
 			cancelRun: vi.fn(async () => undefined),
 			closeSession: vi.fn(async () => undefined),
 			createSession: vi.fn(),
+			exportSession: vi.fn(),
 			getModelThinking: vi.fn(),
 			getTranscript: vi.fn(),
 			openSession: vi.fn(),
@@ -575,6 +590,7 @@ describe("createGuiInvokeHandler", () => {
 			cancelRun: vi.fn(async () => undefined),
 			closeSession: vi.fn(async () => undefined),
 			createSession: vi.fn(),
+			exportSession: vi.fn(),
 			getModelThinking: vi.fn(),
 			getTranscript: vi.fn(),
 			openSession: vi.fn(),
@@ -629,6 +645,7 @@ describe("createGuiInvokeHandler", () => {
 			cancelRun: vi.fn(async () => undefined),
 			closeSession: vi.fn(async () => undefined),
 			createSession: vi.fn(),
+			exportSession: vi.fn(),
 			getModelThinking: vi.fn(),
 			getTranscript: vi.fn(),
 			openSession: vi.fn(),
@@ -660,6 +677,203 @@ describe("createGuiInvokeHandler", () => {
 		expect(sessionSupervisor.restoreQueuedMessages).toHaveBeenCalledWith(workspaceId, sessionId);
 	});
 
+	test("routes image attachment commands through the image service", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const snapshot = { workspaceId, sessionId, attachments: [] };
+		const imageAttachmentService = {
+			clear: vi.fn(() => snapshot),
+			pasteImageFromClipboard: vi.fn(async () => snapshot),
+			pickImages: vi.fn(async () => snapshot),
+			remove: vi.fn(() => snapshot),
+		};
+		const handler = createGuiInvokeHandler({
+			app,
+			eventBus: new RendererEventBus(),
+			imageAttachmentService,
+			mode: "test",
+			policy,
+		});
+		const sender = createSender();
+
+		const pickResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new ComposerPickImages({ requestId: requestIdFromString("request-pick"), workspaceId, sessionId }),
+		);
+		const pasteResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new ComposerPasteImageFromClipboard({
+				requestId: requestIdFromString("request-paste"),
+				workspaceId,
+				sessionId,
+			}),
+		);
+		const removeResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new ComposerRemoveImageAttachment({
+				requestId: requestIdFromString("request-remove"),
+				workspaceId,
+				sessionId,
+				attachmentId: "image-1",
+			}),
+		);
+		const clearResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new ComposerClearImageAttachments({ requestId: requestIdFromString("request-clear"), workspaceId, sessionId }),
+		);
+
+		expect(pickResult).toMatchObject({ ok: true, data: snapshot });
+		expect(pasteResult).toMatchObject({ ok: true, data: snapshot });
+		expect(removeResult).toMatchObject({ ok: true, data: snapshot });
+		expect(clearResult).toMatchObject({ ok: true, data: snapshot });
+		expect(imageAttachmentService.pickImages).toHaveBeenCalledWith(workspaceId, sessionId);
+		expect(imageAttachmentService.pasteImageFromClipboard).toHaveBeenCalledWith(workspaceId, sessionId);
+		expect(imageAttachmentService.remove).toHaveBeenCalledWith(workspaceId, sessionId, "image-1");
+		expect(imageAttachmentService.clear).toHaveBeenCalledWith(workspaceId, sessionId);
+	});
+
+	test("routes export, share, and artifact commands through privileged services", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const exported = {
+			artifactId: "artifact-1",
+			workspaceId,
+			sessionId,
+			format: "html" as const,
+			outputPath: "/tmp/session.html",
+			createdAt: "2026-06-20T00:00:00.000Z",
+		};
+		const shared = {
+			artifactId: "artifact-share",
+			workspaceId,
+			sessionId,
+			gistUrl: "https://gist.github.com/user/abc123",
+			previewUrl: "https://pi.dev/session/#abc123",
+			createdAt: "2026-06-20T00:00:00.000Z",
+		};
+		const sessionSupervisor = {
+			cancelRun: vi.fn(async () => undefined),
+			closeSession: vi.fn(async () => undefined),
+			createSession: vi.fn(),
+			exportSession: vi.fn(async () => exported),
+			getModelThinking: vi.fn(),
+			getTranscript: vi.fn(),
+			openSession: vi.fn(),
+			respondToExtensionUi: vi.fn(),
+			restoreQueuedMessages: vi.fn(),
+			sendMessage: vi.fn(async () => undefined),
+			setModel: vi.fn(),
+			setThinkingLevel: vi.fn(),
+			updateExtensionEditorText: vi.fn(),
+		};
+		const shareService = { share: vi.fn(async () => shared) };
+		const artifactService = {
+			open: vi.fn(async () => undefined),
+			openExternal: vi.fn(async () => undefined),
+			reveal: vi.fn(() => undefined),
+			trackExternal: vi.fn(),
+			trackFile: vi.fn(),
+		};
+		const handler = createGuiInvokeHandler({
+			app,
+			artifactService,
+			eventBus: new RendererEventBus(),
+			mode: "test",
+			policy,
+			pickExportPath: async () => "/tmp/session.html",
+			sessionSupervisor,
+			shareService,
+		});
+		const sender = createSender();
+
+		const exportResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new SessionExport({
+				requestId: requestIdFromString("request-export"),
+				workspaceId,
+				sessionId,
+				format: "html",
+			}),
+		);
+		const shareResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new SessionShare({
+				requestId: requestIdFromString("request-share"),
+				workspaceId,
+				sessionId,
+				confirmed: true,
+			}),
+		);
+		const openResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new ArtifactOpen({ requestId: requestIdFromString("request-open"), artifactId: "artifact-1" }),
+		);
+		const revealResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new ArtifactReveal({ requestId: requestIdFromString("request-reveal"), artifactId: "artifact-1" }),
+		);
+		const openExternalResult = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender },
+			new ArtifactOpenExternal({ requestId: requestIdFromString("request-external"), artifactId: "artifact-share" }),
+		);
+
+		expect(exportResult).toMatchObject({ ok: true, data: { status: "exported", artifact: exported } });
+		expect(shareResult).toMatchObject({ ok: true, data: shared });
+		expect(openResult).toMatchObject({ ok: true });
+		expect(revealResult).toMatchObject({ ok: true });
+		expect(openExternalResult).toMatchObject({ ok: true });
+		expect(sessionSupervisor.exportSession).toHaveBeenCalledWith(workspaceId, sessionId, "html", "/tmp/session.html");
+		expect(shareService.share).toHaveBeenCalled();
+		expect(artifactService.open).toHaveBeenCalledWith("artifact-1");
+		expect(artifactService.reveal).toHaveBeenCalledWith("artifact-1");
+		expect(artifactService.openExternal).toHaveBeenCalledWith("artifact-share");
+	});
+
+	test("returns a typed export cancellation when save path selection is cancelled", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const sessionSupervisor = {
+			cancelRun: vi.fn(async () => undefined),
+			closeSession: vi.fn(async () => undefined),
+			createSession: vi.fn(),
+			exportSession: vi.fn(),
+			getModelThinking: vi.fn(),
+			getTranscript: vi.fn(),
+			openSession: vi.fn(),
+			respondToExtensionUi: vi.fn(),
+			restoreQueuedMessages: vi.fn(),
+			sendMessage: vi.fn(async () => undefined),
+			setModel: vi.fn(),
+			setThinkingLevel: vi.fn(),
+			updateExtensionEditorText: vi.fn(),
+		};
+		const handler = createGuiInvokeHandler({
+			app,
+			eventBus: new RendererEventBus(),
+			mode: "test",
+			pickExportPath: async () => undefined,
+			policy,
+			sessionSupervisor,
+		});
+
+		const result = await handler(
+			{ senderFrame: { url: policy.packagedRendererUrl.href }, sender: createSender() },
+			new SessionExport({
+				requestId: requestIdFromString("request-export"),
+				workspaceId,
+				sessionId,
+				format: "jsonl",
+			}),
+		);
+
+		expect(result).toEqual({
+			ok: true,
+			requestId: "request-export",
+			data: { status: "cancelled", workspaceId, sessionId, format: "jsonl" },
+		});
+		expect(sessionSupervisor.exportSession).not.toHaveBeenCalled();
+	});
+
 	test("routes extension editor text mirror updates through the supervisor", async () => {
 		const workspaceId = workspaceIdFromString("workspace-1");
 		const sessionId = sessionIdFromString("session-1");
@@ -667,6 +881,7 @@ describe("createGuiInvokeHandler", () => {
 			cancelRun: vi.fn(async () => undefined),
 			closeSession: vi.fn(async () => undefined),
 			createSession: vi.fn(),
+			exportSession: vi.fn(),
 			getModelThinking: vi.fn(),
 			getTranscript: vi.fn(),
 			openSession: vi.fn(),

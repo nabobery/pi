@@ -320,6 +320,15 @@ button:not(:disabled) {
 	padding: 10px 28px;
 }
 
+.artifact-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	border-bottom: 1px solid #dddcd4;
+	background: #fbfbf7;
+	padding: 10px 28px;
+}
+
 .runtime-controls label {
 	display: grid;
 	gap: 4px;
@@ -457,6 +466,22 @@ button:not(:disabled) {
 
 .extension-strip p {
 	margin: 0;
+}
+
+.extension-widget {
+	overflow: auto;
+	max-height: 180px;
+	margin: 0;
+	border-left: 3px solid #6e8f7a;
+	background: #ffffff;
+	color: #22221f;
+	padding: 8px 10px;
+	font:
+		12px/1.45 ui-monospace,
+		"SFMono-Regular",
+		Menlo,
+		monospace;
+	white-space: pre-wrap;
 }
 
 .queue-panel {
@@ -844,6 +869,45 @@ button:not(:disabled) {
 	cursor: not-allowed;
 }
 
+.attachment-strip {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	min-height: 48px;
+}
+
+.attachment-chip {
+	display: grid;
+	grid-template-columns: 40px minmax(80px, 180px) auto;
+	align-items: center;
+	gap: 8px;
+	border: 1px solid #d2d1c8;
+	border-radius: 6px;
+	background: #fbfbf7;
+	padding: 6px;
+}
+
+.attachment-chip img {
+	width: 40px;
+	height: 40px;
+	border: 1px solid #dddcd4;
+	border-radius: 4px;
+	object-fit: cover;
+}
+
+.attachment-chip span {
+	overflow: hidden;
+	color: #22221f;
+	font-size: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.attachment-chip button {
+	padding: 5px 7px;
+	font-size: 12px;
+}
+
 .composer-status {
 	display: flex;
 	align-items: center;
@@ -877,6 +941,7 @@ button:not(:disabled) {
 
 	.timeline-header,
 	.runtime-controls,
+	.artifact-actions,
 	.queue-panel__header,
 	.composer-status,
 	.composer-actions {
@@ -884,7 +949,8 @@ button:not(:disabled) {
 		flex-direction: column;
 	}
 
-	.runtime-controls {
+	.runtime-controls,
+	.artifact-actions {
 		padding-inline: 20px;
 	}
 

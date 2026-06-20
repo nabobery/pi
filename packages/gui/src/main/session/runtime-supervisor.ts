@@ -51,6 +51,8 @@ export interface RuntimeAgentSession {
 		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
 	): Promise<{ editorText?: string; cancelled: boolean; aborted?: boolean; summaryEntry?: { id: string } }>;
 	prompt(text: string, options?: PromptOptions): Promise<void>;
+	exportToHtml?(outputPath?: string): Promise<string>;
+	exportToJsonl?(outputPath?: string): string;
 	reload?(): Promise<void>;
 	abortCompaction?(): void;
 	abortBranchSummary?(): void;

@@ -115,13 +115,14 @@ describe("ExtensionHostUiService", () => {
 		expect(context.getEditorText()).toBe("renderer draft");
 	});
 
-	test("publishes inline updates and compatibility issues for unsupported rich UI methods", async () => {
+	test("publishes inline updates, safe text widgets, and compatibility issues for unsupported rich UI methods", async () => {
 		const fixture = createFixture();
 		const workspaceId = workspaceIdFromString("workspace-1");
 		const sessionId = sessionIdFromString("session-1");
 		const context = fixture.service.createContext(workspaceId, sessionId);
 		const autocompleteFactory = undefined as unknown as Parameters<typeof context.addAutocompleteProvider>[0];
 		const customFactory = undefined as unknown as Parameters<typeof context.custom>[0];
+		const setWidget = context.setWidget as (key: string, content: unknown) => void;
 
 		context.notify("Heads up", "warning");
 		context.setStatus("build", "running");
@@ -132,7 +133,9 @@ describe("ExtensionHostUiService", () => {
 		context.setWorkingMessage("Working");
 		context.setWorkingIndicator();
 		context.setHiddenThinkingLabel("Thinking");
-		context.setWidget("widget", ["line"]);
+		setWidget("widget", ["line one", "line two"]);
+		setWidget("string-widget", "single\nmulti");
+		setWidget("unsafe", [{ text: "rich" }]);
 		context.setFooter(undefined);
 		context.setHeader(undefined);
 		context.addAutocompleteProvider(autocompleteFactory);
@@ -169,6 +172,28 @@ describe("ExtensionHostUiService", () => {
 					_tag: "extensionUi.updated",
 					update: expect.objectContaining({ kind: "editorText", editorText: "draft plus" }),
 				}),
+				expect.objectContaining({
+					_tag: "extensionUi.updated",
+					update: expect.objectContaining({
+						kind: "widget",
+						widget: expect.objectContaining({
+							key: "widget",
+							lines: ["line one", "line two"],
+							placement: "aboveEditor",
+						}),
+					}),
+				}),
+				expect.objectContaining({
+					_tag: "extensionUi.updated",
+					update: expect.objectContaining({
+						kind: "widget",
+						widget: expect.objectContaining({
+							key: "string-widget",
+							lines: ["single", "multi"],
+						}),
+					}),
+				}),
+				expect.objectContaining({ _tag: "extensionUi.compatibilityIssue", method: "setWidget" }),
 				expect.objectContaining({ _tag: "extensionUi.compatibilityIssue", method: "setWorkingVisible" }),
 				expect.objectContaining({ _tag: "extensionUi.compatibilityIssue", method: "theme" }),
 			]),

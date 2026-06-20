@@ -5,6 +5,7 @@ import {
 	type CommonSettingsPatch,
 	type ExtensionUiRequestSnapshot,
 	type ExtensionUiStateSnapshot,
+	type ImageAttachmentListSnapshot,
 	SessionArchive,
 	type SessionCatalogSnapshot,
 	SessionCancelRun,
@@ -19,6 +20,8 @@ import {
 	SessionSetModel,
 	SessionSetThinkingLevel,
 	SessionUnarchive,
+	type SessionExportSnapshot,
+	type SessionShareSnapshot,
 	type SessionSnapshot,
 	type SessionTreeSnapshot,
 	type ResourceInventorySnapshot,
@@ -86,6 +89,7 @@ import {
 	emptyControlPlaneState,
 	type ControlPlaneState,
 } from "./control-plane-store.ts";
+import { createDesktopArtifactStoreActions, type SessionArtifactOperationState } from "./desktop-artifacts-store.ts";
 
 export interface RendererCatalogApi {
 	invoke(command: GuiCommand): Promise<GuiCommandResult>;
@@ -103,6 +107,10 @@ export interface CatalogViewState {
 	timelines: Readonly<Record<string, TimelineSnapshot>>;
 	queuesBySessionKey: Readonly<Record<string, QueueSnapshot>>;
 	composerDrafts: Readonly<Record<string, string>>;
+	imageAttachmentsBySessionKey: Readonly<Record<string, ImageAttachmentListSnapshot>>;
+	exportsBySessionKey: Readonly<Record<string, SessionExportSnapshot>>;
+	sharesBySessionKey: Readonly<Record<string, SessionShareSnapshot>>;
+	sessionArtifactStateBySessionKey: Readonly<Record<string, SessionArtifactOperationState>>;
 	modelThinkingBySessionKey: Readonly<Record<string, ModelThinkingSnapshot>>;
 	settingsSummaryByWorkspaceId: Readonly<Record<string, SettingsSummarySnapshot>>;
 	settingsEditorByWorkspaceId: Readonly<Record<string, SettingsEditorSnapshot>>;
@@ -133,6 +141,7 @@ export interface ExtensionUiSessionState {
 	notifications: readonly ExtensionUiStateSnapshot[];
 	statuses: Readonly<Record<string, string>>;
 	title: string | undefined;
+	widgets: Readonly<Record<string, NonNullable<ExtensionUiStateSnapshot["widget"]>>>;
 	compatibilityIssues: readonly string[];
 }
 
@@ -159,6 +168,15 @@ export interface GuiCatalogStore {
 	getTree(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	getTrustStatus(workspaceId: WorkspaceId): Promise<void>;
 	getTranscript(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
+	pickImages(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
+	pasteImageFromClipboard(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
+	removeImageAttachment(workspaceId: WorkspaceId, sessionId: SessionId, attachmentId: string): Promise<void>;
+	clearImageAttachments(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
+	exportSession(workspaceId: WorkspaceId, sessionId: SessionId, format: "html" | "jsonl"): Promise<void>;
+	shareSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
+	openArtifact(artifactId: string): Promise<void>;
+	revealArtifact(artifactId: string): Promise<void>;
+	openExternalArtifact(artifactId: string): Promise<void>;
 	openSession(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void>;
 	openCommandPalette(query?: string): void;
 	openCompactDialog(workspaceId: WorkspaceId, sessionId: SessionId): void;
@@ -210,6 +228,7 @@ export interface GuiCatalogStore {
 		sessionId: SessionId,
 		message: string,
 		deliveryMode?: "steer" | "followUp",
+		attachmentIds?: readonly string[],
 	): Promise<boolean>;
 	setComposerDraft(workspaceId: WorkspaceId, sessionId: SessionId, value: string): void;
 	setCommandPaletteQuery(query: string): void;
@@ -247,6 +266,10 @@ export function createGuiCatalogStore(
 		timelines: {},
 		queuesBySessionKey: {},
 		composerDrafts: {},
+		imageAttachmentsBySessionKey: {},
+		exportsBySessionKey: {},
+		sharesBySessionKey: {},
+		sessionArtifactStateBySessionKey: {},
 		modelThinkingBySessionKey: {},
 		settingsSummaryByWorkspaceId: {},
 		settingsEditorByWorkspaceId: {},
@@ -321,6 +344,13 @@ export function createGuiCatalogStore(
 		nextRequestId,
 		updateState,
 	});
+	const desktopArtifactActions = createDesktopArtifactStoreActions({
+		getState: () => state,
+		invoke,
+		invokeVoid,
+		nextRequestId,
+		updateState,
+	});
 
 	return {
 		archiveSession: (workspaceId, sessionId) =>
@@ -385,7 +415,7 @@ export function createGuiCatalogStore(
 		},
 		selectWorkspace: (workspaceId) =>
 			invokeVoid(new WorkspaceSelect({ requestId: nextRequestId("workspace.select"), workspaceId })),
-		sendMessage: (workspaceId, sessionId, message, deliveryMode) =>
+		sendMessage: (workspaceId, sessionId, message, deliveryMode, attachmentIds) =>
 			invoke(
 				new SessionSendMessage({
 					requestId: nextRequestId("session.sendMessage"),
@@ -393,6 +423,7 @@ export function createGuiCatalogStore(
 					sessionId,
 					message,
 					...(deliveryMode ? { deliveryMode } : {}),
+					...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds: [...attachmentIds] } : {}),
 				}),
 			),
 		setComposerDraft: (workspaceId, sessionId, value) => {
@@ -434,6 +465,7 @@ export function createGuiCatalogStore(
 			invokeVoid(new WorkspaceSync({ requestId: nextRequestId("workspace.sync"), workspaceId })),
 		unarchiveSession: (workspaceId, sessionId) =>
 			invokeVoid(new SessionUnarchive({ requestId: nextRequestId("session.unarchive"), workspaceId, sessionId })),
+		...desktopArtifactActions,
 		...controlPlaneActions,
 		...commandPaletteActions,
 		...treeAndCompactionActions,
@@ -534,6 +566,11 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 		const previous = state.sessionCatalogs[event.workspaceId];
 		const { [key]: _closedTimeline, ...timelines } = state.timelines;
 		const { [key]: _closedQueue, ...queuesBySessionKey } = state.queuesBySessionKey;
+		const { [key]: _closedImages, ...imageAttachmentsBySessionKey } = state.imageAttachmentsBySessionKey;
+		const { [key]: _closedExport, ...exportsBySessionKey } = state.exportsBySessionKey;
+		const { [key]: _closedShare, ...sharesBySessionKey } = state.sharesBySessionKey;
+		const { [key]: _closedArtifactState, ...sessionArtifactStateBySessionKey } =
+			state.sessionArtifactStateBySessionKey;
 		const { [key]: _closedModelThinking, ...modelThinkingBySessionKey } = state.modelThinkingBySessionKey;
 		const { [key]: _closedExtensionUi, ...extensionUiBySessionKey } = state.extensionUiBySessionKey;
 		const { [key]: _closedOverlay, ...runtimeOverlaysBySessionKey } = state.runtimeOverlaysBySessionKey;
@@ -546,6 +583,10 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 				...state,
 				timelines,
 				queuesBySessionKey,
+				imageAttachmentsBySessionKey,
+				exportsBySessionKey,
+				sharesBySessionKey,
+				sessionArtifactStateBySessionKey,
 				modelThinkingBySessionKey,
 				extensionUiBySessionKey,
 				runtimeOverlaysBySessionKey,
@@ -562,6 +603,10 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 			...state,
 			timelines,
 			queuesBySessionKey,
+			imageAttachmentsBySessionKey,
+			exportsBySessionKey,
+			sharesBySessionKey,
+			sessionArtifactStateBySessionKey,
 			modelThinkingBySessionKey,
 			extensionUiBySessionKey,
 			runtimeOverlaysBySessionKey,
@@ -771,6 +816,15 @@ function applyEvent(state: CatalogViewState, event: GuiEvent): CatalogViewState 
 			if (update.kind === "title") {
 				return { ...previous, title: update.title };
 			}
+			if (update.kind === "widget" && update.widget) {
+				const widgets = { ...previous.widgets };
+				if (update.widget.lines.length === 0) {
+					delete widgets[update.widget.key];
+				} else {
+					widgets[update.widget.key] = update.widget;
+				}
+				return { ...previous, widgets };
+			}
 			return previous;
 		});
 	}
@@ -914,6 +968,7 @@ function emptyExtensionUiSessionState(): ExtensionUiSessionState {
 		notifications: [],
 		statuses: {},
 		title: undefined,
+		widgets: {},
 		compatibilityIssues: [],
 	};
 }

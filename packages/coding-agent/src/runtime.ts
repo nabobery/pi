@@ -1,5 +1,5 @@
 export { type Api, getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
-export { getAgentDir } from "./config.ts";
+export { getAgentDir, getShareViewerUrl } from "./config.ts";
 export type { AgentSessionEvent, PromptOptions } from "./core/agent-session.ts";
 export {
 	AgentSessionRuntime,
@@ -60,3 +60,5 @@ export {
 	type ProjectTrustOption,
 	ProjectTrustStore,
 } from "./core/trust-manager.ts";
+export { formatDimensionNote, resizeImage } from "./utils/image-resize.ts";
+export { detectSupportedImageMimeTypeFromFile } from "./utils/mime.ts";

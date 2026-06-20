@@ -644,6 +644,54 @@ describe("SessionSupervisor", () => {
 		});
 	});
 
+	test("sendMessage consumes selected image attachments and forwards them to the runtime driver", async () => {
+		const imageAttachmentService = {
+			clearSession: vi.fn(),
+			consume: vi.fn(() => [{ type: "image" as const, data: "abcd", mimeType: "image/png" }]),
+		};
+		const fixture = createSupervisorFixture({ imageAttachmentService });
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+		fixture.events.length = 0;
+
+		await fixture.supervisor.sendMessage({
+			requestId: requestIdFromString("request-1"),
+			workspaceId: workspaceIdFromString("workspace-a"),
+			sessionId: sessionIdFromString("session-1"),
+			message: "describe",
+			attachmentIds: ["image-1"],
+		});
+
+		expect(imageAttachmentService.consume).toHaveBeenCalledWith("workspace-a", "session-1", ["image-1"]);
+		expect(fixture.driver.sendMessage).toHaveBeenCalledWith(
+			expect.any(Object),
+			expect.objectContaining({
+				message: "describe",
+				images: [{ type: "image", data: "abcd", mimeType: "image/png" }],
+			}),
+		);
+	});
+
+	test("sendMessage prefers the send-time image attachment resolver when available", async () => {
+		const imageAttachmentService = {
+			clearSession: vi.fn(),
+			consume: vi.fn(() => []),
+			consumeForSend: vi.fn(async () => [{ type: "image" as const, data: "abcd", mimeType: "image/png" }]),
+		};
+		const fixture = createSupervisorFixture({ imageAttachmentService });
+		await fixture.supervisor.openSession(workspaceIdFromString("workspace-a"), sessionIdFromString("session-1"));
+
+		await fixture.supervisor.sendMessage({
+			requestId: requestIdFromString("request-1"),
+			workspaceId: workspaceIdFromString("workspace-a"),
+			sessionId: sessionIdFromString("session-1"),
+			message: "describe",
+			attachmentIds: ["image-1"],
+		});
+
+		expect(imageAttachmentService.consumeForSend).toHaveBeenCalledWith("workspace-a", "session-1", ["image-1"]);
+		expect(imageAttachmentService.consume).not.toHaveBeenCalled();
+	});
+
 	test("prompt preflight rejection does not start a run", async () => {
 		const fixture = createSupervisorFixture();
 		fixture.driver.sendMessage = vi.fn(async () => {
@@ -868,6 +916,7 @@ describe("SessionSupervisor", () => {
 function createSupervisorFixture(
 	options: {
 		extensionHostUiService?: ConstructorParameters<typeof SessionSupervisor>[0]["extensionHostUiService"];
+		imageAttachmentService?: ConstructorParameters<typeof SessionSupervisor>[0]["imageAttachmentService"];
 		maxOpenSessions?: number;
 	} = {},
 ) {
@@ -927,6 +976,12 @@ function createSupervisorFixture(
 				cancelled: false,
 			}),
 		),
+		exportSession: vi.fn(async (handle, request) => ({
+			workspaceId: handle.workspaceId,
+			sessionId: handle.sessionId,
+			format: request.format,
+			outputPath: request.outputPath ?? `/tmp/session.${request.format}`,
+		})),
 		getModelThinking: vi.fn(async (handle) => ({
 			workspaceId: handle.workspaceId,
 			sessionId: handle.sessionId,
@@ -1042,6 +1097,7 @@ function createSupervisorFixture(
 			driver,
 			eventBus,
 			...(options.extensionHostUiService ? { extensionHostUiService: options.extensionHostUiService } : {}),
+			...(options.imageAttachmentService ? { imageAttachmentService: options.imageAttachmentService } : {}),
 			...(options.maxOpenSessions ? { maxOpenSessions: options.maxOpenSessions } : {}),
 		}),
 		unsubscribe,

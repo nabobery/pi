@@ -4,6 +4,7 @@ import { ExtensionUiRequestId, RequestId, SessionId, WorkspaceId } from "./ids.t
 import {
 	BootstrapSnapshot,
 	CommonSettingsPatch,
+	ImageAttachmentListSnapshot,
 	ModelThinkingSnapshot,
 	QueueRestoreSnapshot,
 	ResourceInventorySnapshot,
@@ -13,6 +14,8 @@ import {
 	ResumeSortMode,
 	SessionCompactionSnapshot,
 	SessionCatalogSnapshot,
+	SessionExportResultSnapshot,
+	SessionShareSnapshot,
 	SessionTreeSnapshot,
 	SettingsEditorSnapshot,
 	SettingsSummarySnapshot,
@@ -114,13 +117,88 @@ export class SessionSendMessage extends Schema.TaggedRequest<SessionSendMessage>
 		sessionId: SessionId,
 		message: Schema.String,
 		deliveryMode: Schema.optional(Schema.Literal("steer", "followUp")),
+		attachmentIds: Schema.optional(Schema.Array(Schema.NonEmptyTrimmedString)),
 	},
 }) {}
+
+export class ComposerPickImages extends Schema.TaggedRequest<ComposerPickImages>()("composer.pickImages", {
+	failure: GuiError,
+	success: ImageAttachmentListSnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
+}) {}
+
+export class ComposerPasteImageFromClipboard extends Schema.TaggedRequest<ComposerPasteImageFromClipboard>()(
+	"composer.pasteImageFromClipboard",
+	{
+		failure: GuiError,
+		success: ImageAttachmentListSnapshot,
+		payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
+	},
+) {}
+
+export class ComposerRemoveImageAttachment extends Schema.TaggedRequest<ComposerRemoveImageAttachment>()(
+	"composer.removeImageAttachment",
+	{
+		failure: GuiError,
+		success: ImageAttachmentListSnapshot,
+		payload: {
+			requestId: RequestId,
+			workspaceId: WorkspaceId,
+			sessionId: SessionId,
+			attachmentId: Schema.NonEmptyTrimmedString,
+		},
+	},
+) {}
+
+export class ComposerClearImageAttachments extends Schema.TaggedRequest<ComposerClearImageAttachments>()(
+	"composer.clearImageAttachments",
+	{
+		failure: GuiError,
+		success: ImageAttachmentListSnapshot,
+		payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
+	},
+) {}
 
 export class SessionCancelRun extends Schema.TaggedRequest<SessionCancelRun>()("session.cancelRun", {
 	failure: GuiError,
 	success: VoidSuccess,
 	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId },
+}) {}
+
+export class SessionExport extends Schema.TaggedRequest<SessionExport>()("session.export", {
+	failure: GuiError,
+	success: SessionExportResultSnapshot,
+	payload: {
+		requestId: RequestId,
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		format: Schema.Literal("html", "jsonl"),
+		outputPath: Schema.optional(Schema.String),
+	},
+}) {}
+
+export class SessionShare extends Schema.TaggedRequest<SessionShare>()("session.share", {
+	failure: GuiError,
+	success: SessionShareSnapshot,
+	payload: { requestId: RequestId, workspaceId: WorkspaceId, sessionId: SessionId, confirmed: Schema.Literal(true) },
+}) {}
+
+export class ArtifactOpen extends Schema.TaggedRequest<ArtifactOpen>()("artifact.open", {
+	failure: GuiError,
+	success: VoidSuccess,
+	payload: { requestId: RequestId, artifactId: Schema.NonEmptyTrimmedString },
+}) {}
+
+export class ArtifactReveal extends Schema.TaggedRequest<ArtifactReveal>()("artifact.reveal", {
+	failure: GuiError,
+	success: VoidSuccess,
+	payload: { requestId: RequestId, artifactId: Schema.NonEmptyTrimmedString },
+}) {}
+
+export class ArtifactOpenExternal extends Schema.TaggedRequest<ArtifactOpenExternal>()("artifact.openExternal", {
+	failure: GuiError,
+	success: VoidSuccess,
+	payload: { requestId: RequestId, artifactId: Schema.NonEmptyTrimmedString },
 }) {}
 
 export class SessionRestoreQueuedMessages extends Schema.TaggedRequest<SessionRestoreQueuedMessages>()(
@@ -424,7 +502,16 @@ export const GuiCommand = Schema.Union(
 	SessionUnarchive,
 	SessionClose,
 	SessionSendMessage,
+	ComposerPickImages,
+	ComposerPasteImageFromClipboard,
+	ComposerRemoveImageAttachment,
+	ComposerClearImageAttachments,
 	SessionCancelRun,
+	SessionExport,
+	SessionShare,
+	ArtifactOpen,
+	ArtifactReveal,
+	ArtifactOpenExternal,
 	SessionRestoreQueuedMessages,
 	SessionSetModel,
 	SessionSetThinkingLevel,

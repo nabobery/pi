@@ -1,9 +1,12 @@
 import {
 	decodeModelThinkingSnapshot,
+	decodeImageAttachmentListSnapshot,
 	decodeQueueRestoreSnapshot,
 	decodeResourceInventorySnapshot,
 	decodeSessionCatalogSnapshot,
 	decodeSessionCompactionSnapshot,
+	decodeSessionExportResultSnapshot,
+	decodeSessionShareSnapshot,
 	decodeSessionTreeSnapshot,
 	decodeSettingsEditorSnapshot,
 	decodeSettingsSummarySnapshot,
@@ -12,9 +15,13 @@ import {
 	decodeTrustStatusSnapshot,
 	decodeWorkspaceCatalogSnapshot,
 	type ModelThinkingSnapshot,
+	type ImageAttachmentListSnapshot,
 	type QueueRestoreSnapshot,
 	type ResourceInventorySnapshot,
 	type SessionCatalogSnapshot,
+	type SessionExportResultSnapshot,
+	type SessionExportSnapshot,
+	type SessionShareSnapshot,
 	type SessionTreeSnapshot,
 	type SettingsEditorSnapshot,
 	type SettingsSummarySnapshot,
@@ -56,6 +63,36 @@ export async function applyCommandResultData(state: CatalogViewState, data: unkn
 			modelThinkingBySessionKey: {
 				...state.modelThinkingBySessionKey,
 				[timelineKey(modelThinking.workspaceId, modelThinking.sessionId)]: modelThinking,
+			},
+		};
+	}
+	const imageAttachments = await decodeImageAttachments(data);
+	if (imageAttachments) {
+		return {
+			...state,
+			imageAttachmentsBySessionKey: {
+				...state.imageAttachmentsBySessionKey,
+				[timelineKey(imageAttachments.workspaceId, imageAttachments.sessionId)]: imageAttachments,
+			},
+		};
+	}
+	const exported = await decodeExport(data);
+	if (exported) {
+		return {
+			...state,
+			exportsBySessionKey: {
+				...state.exportsBySessionKey,
+				[timelineKey(exported.workspaceId, exported.sessionId)]: exported,
+			},
+		};
+	}
+	const shared = await decodeShare(data);
+	if (shared) {
+		return {
+			...state,
+			sharesBySessionKey: {
+				...state.sharesBySessionKey,
+				[timelineKey(shared.workspaceId, shared.sessionId)]: shared,
 			},
 		};
 	}
@@ -145,6 +182,35 @@ async function decodeTimeline(data: unknown): Promise<TimelineSnapshot | undefin
 async function decodeModelThinking(data: unknown): Promise<ModelThinkingSnapshot | undefined> {
 	try {
 		return await decodeModelThinkingSnapshot(data);
+	} catch {
+		return undefined;
+	}
+}
+
+async function decodeImageAttachments(data: unknown): Promise<ImageAttachmentListSnapshot | undefined> {
+	try {
+		return await decodeImageAttachmentListSnapshot(data);
+	} catch {
+		return undefined;
+	}
+}
+
+async function decodeExport(data: unknown): Promise<SessionExportSnapshot | undefined> {
+	try {
+		const result = await decodeSessionExportResultSnapshot(data);
+		return exportedArtifact(result);
+	} catch {
+		return undefined;
+	}
+}
+
+function exportedArtifact(result: SessionExportResultSnapshot): SessionExportSnapshot | undefined {
+	return result.status === "exported" ? result.artifact : undefined;
+}
+
+async function decodeShare(data: unknown): Promise<SessionShareSnapshot | undefined> {
+	try {
+		return await decodeSessionShareSnapshot(data);
 	} catch {
 		return undefined;
 	}

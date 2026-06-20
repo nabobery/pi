@@ -46,6 +46,7 @@ import {
 	type RunId,
 	type SessionCatalogSnapshot,
 	type SessionCompactionSnapshot,
+	type SessionExportSnapshot,
 	type SessionId,
 	type SessionSnapshot,
 	type SessionTreeSnapshot,
@@ -59,7 +60,16 @@ import {
 	runIdFromString,
 } from "../../contracts/index.ts";
 import { projectQueueSnapshot } from "./queue-projection.ts";
+import { consumeSessionImages, type SessionImageAttachmentResolver } from "./session-attachments.ts";
+import { exportReadySession, type SessionArtifactTracker } from "./session-export.ts";
 import { createRuntimeSessionKey, type RuntimeSessionKey } from "./session-key.ts";
+import {
+	findSelectedSession,
+	findSession,
+	getErrorMessage,
+	stringifyEventValue,
+	withStatus,
+} from "./session-supervisor-utils.ts";
 import type { ExtensionHostUiService, ExtensionUiResponse } from "./extension-host-ui-service.ts";
 import type { RuntimeSessionEvent, RuntimeSessionHandle, SessionDriver } from "./session-driver.ts";
 
@@ -84,6 +94,10 @@ export interface SessionSupervisorOptions {
 	driver: SessionDriver;
 	eventBus: SessionSupervisorEventBus;
 	extensionHostUiService?: Pick<ExtensionHostUiService, "cancelSessionRequests" | "respond" | "updateEditorText">;
+	imageAttachmentService?: SessionImageAttachmentResolver & {
+		clearSession(workspaceId: WorkspaceId, sessionId: SessionId): void;
+	};
+	artifactService?: SessionArtifactTracker;
 	maxOpenSessions?: number;
 }
 
@@ -105,7 +119,9 @@ export class SessionSupervisor {
 	private readonly catalogService: SessionCatalogRuntimeService;
 	private readonly driver: SessionDriver;
 	private readonly eventBus: SessionSupervisorEventBus;
+	private readonly artifactService: SessionSupervisorOptions["artifactService"];
 	private readonly extensionHostUiService: SessionSupervisorOptions["extensionHostUiService"];
+	private readonly imageAttachmentService: SessionSupervisorOptions["imageAttachmentService"];
 	private readonly maxOpenSessions: number;
 	private readonly records = new Map<RuntimeSessionKey, ManagedSessionRecord>();
 	private runSequence = 0;
@@ -114,7 +130,9 @@ export class SessionSupervisor {
 		this.catalogService = options.catalogService;
 		this.driver = options.driver;
 		this.eventBus = options.eventBus;
+		this.artifactService = options.artifactService;
 		this.extensionHostUiService = options.extensionHostUiService;
+		this.imageAttachmentService = options.imageAttachmentService;
 		this.maxOpenSessions = options.maxOpenSessions ?? 4;
 	}
 
@@ -156,6 +174,7 @@ export class SessionSupervisor {
 
 		await this.driver.closeSession(record.handle);
 		this.extensionHostUiService?.cancelSessionRequests(workspaceId, sessionId);
+		this.imageAttachmentService?.clearSession(workspaceId, sessionId);
 		record.unsubscribe();
 		this.records.delete(key);
 		this.eventBus.publish(new SessionClosed({ ...this.eventBus.nextEventBase(), workspaceId, sessionId }));
@@ -167,8 +186,10 @@ export class SessionSupervisor {
 		sessionId: SessionId;
 		message: string;
 		deliveryMode?: "steer" | "followUp";
+		attachmentIds?: readonly string[];
 	}): Promise<void> {
 		const record = this.getRecord(request.workspaceId, request.sessionId);
+		const images = await this.consumeImages(request.workspaceId, request.sessionId, request.attachmentIds);
 		if (request.deliveryMode) {
 			if (!record.activeRunId) {
 				throw new SessionRunNotActive({
@@ -180,6 +201,7 @@ export class SessionSupervisor {
 			await this.driver.sendMessage(record.handle, {
 				message: request.message,
 				deliveryMode: request.deliveryMode,
+				...(images ? { images } : {}),
 			});
 			this.publishAcceptedReceipt(request.requestId);
 			return;
@@ -187,6 +209,7 @@ export class SessionSupervisor {
 
 		const result = await this.driver.sendMessage(record.handle, {
 			message: request.message,
+			...(images ? { images } : {}),
 		});
 		const runId = this.createRunId(request.workspaceId, request.sessionId);
 		record.activeRunId = runId;
@@ -410,6 +433,16 @@ export class SessionSupervisor {
 			record.manualCompactionActive = false;
 			record.manualCompactionCancelling = false;
 		}
+	}
+
+	async exportSession(
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		format: "html" | "jsonl",
+		outputPath: string | undefined,
+	): Promise<SessionExportSnapshot> {
+		const record = this.getRecord(workspaceId, sessionId);
+		return exportReadySession(this.driver, this.artifactService, record, format, outputPath);
 	}
 
 	async cancelCompaction(workspaceId: WorkspaceId, sessionId: SessionId): Promise<void> {
@@ -938,38 +971,12 @@ export class SessionSupervisor {
 			lastActivitySequence: record.lastActivitySequence,
 		};
 	}
-}
 
-function findSelectedSession(catalog: SessionCatalogSnapshot): SessionSnapshot {
-	const selectedSessionId = catalog.selectedSessionId ?? catalog.sessions[0]?.id;
-	if (selectedSessionId) return findSession(catalog, selectedSessionId);
-	throw new SessionFileMissing({ sessionId: "", path: "", message: "Created session was not returned by catalog" });
-}
-
-function findSession(catalog: SessionCatalogSnapshot, sessionId: SessionId): SessionSnapshot {
-	const session = catalog.sessions.find((entry) => entry.id === sessionId);
-	if (session) return session;
-	throw new SessionRuntimeNotFound({
-		workspaceId: catalog.workspaceId,
-		sessionId,
-		message: `Session ${sessionId} was not returned by catalog`,
-	});
-}
-
-function withStatus(session: SessionSnapshot, status: SessionSnapshot["status"]): SessionSnapshot {
-	return { ...session, status };
-}
-
-function getErrorMessage(error: unknown): string {
-	if (error instanceof Error) return error.message;
-	return String(error);
-}
-
-function stringifyEventValue(value: unknown): string {
-	if (typeof value === "string") return value;
-	try {
-		return JSON.stringify(value);
-	} catch {
-		return String(value);
+	private async consumeImages(
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		attachmentIds: readonly string[] | undefined,
+	) {
+		return consumeSessionImages(this.imageAttachmentService, workspaceId, sessionId, attachmentIds);
 	}
 }

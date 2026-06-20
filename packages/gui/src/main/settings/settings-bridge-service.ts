@@ -71,6 +71,8 @@ export class SettingsBridgeService {
 					? { defaultThinkingLevel: settingsManager.getDefaultThinkingLevel() }
 					: {}),
 				enableSkillCommands: settingsManager.getEnableSkillCommands(),
+				imageAutoResize: settingsManager.getImageAutoResize(),
+				imageBlockImages: settingsManager.getBlockImages(),
 				steeringMode: settingsManager.getSteeringMode(),
 				followUpMode: settingsManager.getFollowUpMode(),
 				defaultProjectTrust: settingsManager.getDefaultProjectTrust(),
@@ -83,6 +85,14 @@ export class SettingsBridgeService {
 				cause: getErrorMessage(error),
 			});
 		}
+	}
+
+	async getImageSettings(workspaceId: WorkspaceId): Promise<{ autoResize: boolean; blockImages: boolean }> {
+		const { settingsManager } = await this.createSettingsManager(workspaceId);
+		return {
+			autoResize: settingsManager.getImageAutoResize(),
+			blockImages: settingsManager.getBlockImages(),
+		};
 	}
 
 	async getEditorSnapshot(workspaceId: WorkspaceId): Promise<SettingsEditorSnapshot> {

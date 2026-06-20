@@ -175,6 +175,8 @@ export const SettingsSummarySnapshot = Schema.Struct({
 	defaultModel: Schema.optional(Schema.String),
 	defaultThinkingLevel: Schema.optional(ThinkingLevel),
 	enableSkillCommands: Schema.Boolean,
+	imageAutoResize: Schema.optional(Schema.Boolean),
+	imageBlockImages: Schema.optional(Schema.Boolean),
 	steeringMode: Schema.Literal("all", "one-at-a-time"),
 	followUpMode: Schema.Literal("all", "one-at-a-time"),
 	defaultProjectTrust: Schema.Literal("ask", "always", "never"),
@@ -247,6 +249,7 @@ export const QueueMessageSnapshot = Schema.Struct({
 	index: Schema.Number,
 	text: Schema.String,
 	kind: QueueMessageKind,
+	attachmentCount: Schema.optional(Schema.Number),
 });
 export type QueueMessageSnapshot = Schema.Schema.Type<typeof QueueMessageSnapshot>;
 
@@ -445,6 +448,85 @@ export type ResourceInventorySnapshot = Schema.Schema.Type<typeof ResourceInvent
 export const decodeResourceInventorySnapshot = (value: unknown): Promise<ResourceInventorySnapshot> =>
 	Effect.runPromise(Schema.decodeUnknown(ResourceInventorySnapshot)(value));
 
+export const ImageAttachmentSnapshot = Schema.Struct({
+	id: Schema.NonEmptyTrimmedString,
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	source: Schema.Literal("file", "clipboard"),
+	fileName: Schema.optional(Schema.String),
+	mimeType: Schema.Literal("image/png", "image/jpeg", "image/gif", "image/webp"),
+	sizeBytes: Schema.Number,
+	previewDataUrl: Schema.String.pipe(
+		Schema.filter(isImageDataUrlString, { message: () => "Expected an image data URL" }),
+	),
+	dimensionNote: Schema.optional(Schema.String),
+	createdAt: Schema.String,
+});
+export type ImageAttachmentSnapshot = Schema.Schema.Type<typeof ImageAttachmentSnapshot>;
+export const decodeImageAttachmentSnapshot = (value: unknown): Promise<ImageAttachmentSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(ImageAttachmentSnapshot)(value));
+
+export const ImageAttachmentListSnapshot = Schema.Struct({
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	attachments: Schema.Array(ImageAttachmentSnapshot),
+});
+export type ImageAttachmentListSnapshot = Schema.Schema.Type<typeof ImageAttachmentListSnapshot>;
+export const decodeImageAttachmentListSnapshot = (value: unknown): Promise<ImageAttachmentListSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(ImageAttachmentListSnapshot)(value));
+
+export const SessionExportSnapshot = Schema.Struct({
+	artifactId: Schema.NonEmptyTrimmedString,
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	format: Schema.Literal("html", "jsonl"),
+	outputPath: Schema.String,
+	createdAt: Schema.String,
+});
+export type SessionExportSnapshot = Schema.Schema.Type<typeof SessionExportSnapshot>;
+export const decodeSessionExportSnapshot = (value: unknown): Promise<SessionExportSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(SessionExportSnapshot)(value));
+
+export const SessionExportResultSnapshot = Schema.Union(
+	Schema.Struct({
+		status: Schema.Literal("exported"),
+		artifact: SessionExportSnapshot,
+	}),
+	Schema.Struct({
+		status: Schema.Literal("cancelled"),
+		workspaceId: WorkspaceId,
+		sessionId: SessionId,
+		format: Schema.Literal("html", "jsonl"),
+	}),
+);
+export type SessionExportResultSnapshot = Schema.Schema.Type<typeof SessionExportResultSnapshot>;
+export const decodeSessionExportResultSnapshot = (value: unknown): Promise<SessionExportResultSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(SessionExportResultSnapshot)(value));
+
+export const SessionShareSnapshot = Schema.Struct({
+	workspaceId: WorkspaceId,
+	sessionId: SessionId,
+	artifactId: Schema.optional(Schema.NonEmptyTrimmedString),
+	gistUrl: Schema.String.pipe(
+		Schema.filter(isGitHubGistUrlString, { message: () => "Expected an HTTPS GitHub gist URL" }),
+	),
+	previewUrl: Schema.String.pipe(
+		Schema.filter(isAllowedSharePreviewUrlString, { message: () => "Expected an HTTPS share preview URL" }),
+	),
+	createdAt: Schema.String,
+});
+export type SessionShareSnapshot = Schema.Schema.Type<typeof SessionShareSnapshot>;
+export const decodeSessionShareSnapshot = (value: unknown): Promise<SessionShareSnapshot> =>
+	Effect.runPromise(Schema.decodeUnknown(SessionShareSnapshot)(value));
+
+export const ExtensionWidgetSnapshot = Schema.Struct({
+	key: Schema.String,
+	lines: Schema.Array(Schema.String),
+	placement: Schema.Literal("aboveEditor", "belowEditor"),
+	updatedAt: Schema.String,
+});
+export type ExtensionWidgetSnapshot = Schema.Schema.Type<typeof ExtensionWidgetSnapshot>;
+
 export const ExtensionUiRequestSnapshot = Schema.Struct({
 	id: ExtensionUiRequestId,
 	workspaceId: WorkspaceId,
@@ -462,15 +544,47 @@ export type ExtensionUiRequestSnapshot = Schema.Schema.Type<typeof ExtensionUiRe
 export const ExtensionUiStateSnapshot = Schema.Struct({
 	workspaceId: WorkspaceId,
 	sessionId: SessionId,
-	kind: Schema.Literal("notify", "status", "title", "editorText"),
+	kind: Schema.Literal("notify", "status", "title", "editorText", "widget"),
 	message: Schema.optional(Schema.String),
 	notifyType: Schema.optional(Schema.Literal("info", "warning", "error")),
 	statusKey: Schema.optional(Schema.String),
 	statusText: Schema.optional(Schema.String),
 	title: Schema.optional(Schema.String),
 	editorText: Schema.optional(Schema.String),
+	widget: Schema.optional(ExtensionWidgetSnapshot),
 });
 export type ExtensionUiStateSnapshot = Schema.Schema.Type<typeof ExtensionUiStateSnapshot>;
+
+export function isAllowedExternalArtifactUrl(value: string): boolean {
+	return isGitHubGistUrlString(value) || isAllowedSharePreviewUrlString(value);
+}
+
+function isImageDataUrlString(value: string): boolean {
+	return /^data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value);
+}
+
+function isGitHubGistUrlString(value: string): boolean {
+	const url = parseUrl(value);
+	if (!url) return false;
+	return (
+		url.protocol === "https:" &&
+		url.hostname === "gist.github.com" &&
+		url.pathname.split("/").filter(Boolean).length > 0
+	);
+}
+
+function isAllowedSharePreviewUrlString(value: string): boolean {
+	const url = parseUrl(value);
+	return Boolean(url && url.protocol === "https:");
+}
+
+function parseUrl(value: string): URL | undefined {
+	try {
+		return new URL(value);
+	} catch {
+		return undefined;
+	}
+}
 
 export const BootstrapSnapshot = Schema.Struct({
 	appInfo: AppInfoSnapshot,

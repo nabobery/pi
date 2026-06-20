@@ -3,6 +3,8 @@ import {
 	SessionModelAuthUnavailable,
 	SessionModelNotFound,
 	SessionModelSetFailed,
+	SessionExportFailed,
+	SessionExportUnavailable,
 	SessionCancelFailed,
 	SessionCompactFailed,
 	SessionCompactionNotActive,
@@ -25,6 +27,7 @@ import {
 	type QueueSnapshot,
 	type ResourceInventorySnapshot,
 	type SessionCompactionSnapshot,
+	type SessionExportSnapshot,
 	type SessionId,
 	type SessionTreeSnapshot,
 	type SlashCommandSnapshot,
@@ -127,6 +130,7 @@ export class PiSdkSessionDriver implements SessionDriver {
 
 		const completion = handle.runtime.session.prompt(request.message, {
 			...(request.deliveryMode ? { streamingBehavior: request.deliveryMode } : {}),
+			...(request.images ? { images: request.images } : {}),
 			source: "rpc",
 			preflightResult: (success) => {
 				if (success) {
@@ -280,6 +284,53 @@ export class PiSdkSessionDriver implements SessionDriver {
 				workspaceId: handle.workspaceId,
 				sessionId: handle.sessionId,
 				message: "Failed to compact Pi session",
+				cause: getErrorMessage(error),
+			});
+		}
+	}
+
+	async exportSession(
+		handle: RuntimeSessionHandle,
+		request: { format: "html" | "jsonl"; outputPath?: string },
+	): Promise<Omit<SessionExportSnapshot, "artifactId" | "createdAt">> {
+		try {
+			if (request.format === "html") {
+				const exportToHtml = handle.runtime.session.exportToHtml;
+				if (!exportToHtml) {
+					throw new SessionExportUnavailable({
+						workspaceId: handle.workspaceId,
+						sessionId: handle.sessionId,
+						message: "Pi runtime HTML export API is not available",
+					});
+				}
+				return {
+					workspaceId: handle.workspaceId,
+					sessionId: handle.sessionId,
+					format: "html",
+					outputPath: await exportToHtml.call(handle.runtime.session, request.outputPath),
+				};
+			}
+			const exportToJsonl = handle.runtime.session.exportToJsonl;
+			if (!exportToJsonl) {
+				throw new SessionExportUnavailable({
+					workspaceId: handle.workspaceId,
+					sessionId: handle.sessionId,
+					message: "Pi runtime JSONL export API is not available",
+				});
+			}
+			return {
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				format: "jsonl",
+				outputPath: exportToJsonl.call(handle.runtime.session, request.outputPath),
+			};
+		} catch (error) {
+			if (error instanceof SessionExportUnavailable) throw error;
+			throw new SessionExportFailed({
+				workspaceId: handle.workspaceId,
+				sessionId: handle.sessionId,
+				format: request.format,
+				message: "Failed to export Pi session",
 				cause: getErrorMessage(error),
 			});
 		}

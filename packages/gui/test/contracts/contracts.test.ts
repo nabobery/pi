@@ -3,13 +3,23 @@ import { Effect, Schema } from "effect";
 import {
 	AppBootstrap,
 	AppReady,
+	ArtifactOpen,
+	ArtifactReveal,
 	BootstrapSnapshot,
 	CatalogParseFailed,
 	CommandNotImplemented,
+	ComposerClearImageAttachments,
+	ComposerPasteImageFromClipboard,
+	ComposerPickImages,
+	ComposerRemoveImageAttachment,
 	InvalidWorkspacePath,
 	GuiCommand,
 	GuiError,
 	GuiEvent,
+	ImageAttachmentBlocked,
+	ImageAttachmentLimitExceeded,
+	ImageAttachmentSnapshot,
+	ImageAttachmentTooLarge,
 	ReceiptEmitted,
 	ResumeArchive,
 	ResumeOpen,
@@ -23,6 +33,9 @@ import {
 	RunCancelled,
 	RunCompleted,
 	SessionCompact,
+	SessionExport,
+	SessionExportResultSnapshot,
+	SessionExportSnapshot,
 	SessionCancelCompaction,
 	SessionCancelTreeNavigation,
 	SessionCompactionSnapshot,
@@ -42,6 +55,8 @@ import {
 	SessionRunNotActive,
 	SessionSendMessage,
 	SessionSetTreeEntryLabel,
+	SessionShare,
+	SessionShareSnapshot,
 	SessionTreeSnapshot,
 	SessionTreeUnavailable,
 	SessionNavigateTree,
@@ -329,6 +344,213 @@ describe("gui contracts", () => {
 				resourceId: "",
 			}),
 		).rejects.toThrow();
+	});
+
+	test("decodes image attachment, export, share, and artifact commands", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+
+		await expect(
+			decodeGuiCommand(
+				new ComposerPickImages({
+					requestId: requestIdFromString("request-image-pick"),
+					workspaceId,
+					sessionId,
+				}),
+			),
+		).resolves.toBeInstanceOf(ComposerPickImages);
+		await expect(
+			decodeGuiCommand(
+				new ComposerPasteImageFromClipboard({
+					requestId: requestIdFromString("request-image-paste"),
+					workspaceId,
+					sessionId,
+				}),
+			),
+		).resolves.toBeInstanceOf(ComposerPasteImageFromClipboard);
+		await expect(
+			decodeGuiCommand(
+				new ComposerRemoveImageAttachment({
+					requestId: requestIdFromString("request-image-remove"),
+					workspaceId,
+					sessionId,
+					attachmentId: "image-1",
+				}),
+			),
+		).resolves.toBeInstanceOf(ComposerRemoveImageAttachment);
+		await expect(
+			decodeGuiCommand(
+				new ComposerClearImageAttachments({
+					requestId: requestIdFromString("request-image-clear"),
+					workspaceId,
+					sessionId,
+				}),
+			),
+		).resolves.toBeInstanceOf(ComposerClearImageAttachments);
+		await expect(
+			decodeGuiCommand(
+				new SessionSendMessage({
+					requestId: requestIdFromString("request-image-send"),
+					workspaceId,
+					sessionId,
+					message: "Describe this",
+					attachmentIds: ["image-1"],
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionSendMessage);
+		await expect(
+			decodeGuiCommand(
+				new SessionExport({
+					requestId: requestIdFromString("request-export"),
+					workspaceId,
+					sessionId,
+					format: "html",
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionExport);
+		await expect(
+			decodeGuiCommand(
+				new SessionShare({
+					requestId: requestIdFromString("request-share"),
+					workspaceId,
+					sessionId,
+					confirmed: true,
+				}),
+			),
+		).resolves.toBeInstanceOf(SessionShare);
+		await expect(
+			decodeGuiCommand({
+				_tag: "session.share",
+				requestId: "request-share-unconfirmed",
+				workspaceId,
+				sessionId,
+			}),
+		).rejects.toThrow();
+		await expect(
+			decodeGuiCommand(
+				new ArtifactOpen({ requestId: requestIdFromString("request-open"), artifactId: "artifact-1" }),
+			),
+		).resolves.toBeInstanceOf(ArtifactOpen);
+		await expect(
+			decodeGuiCommand(
+				new ArtifactReveal({ requestId: requestIdFromString("request-reveal"), artifactId: "artifact-1" }),
+			),
+		).resolves.toBeInstanceOf(ArtifactReveal);
+	});
+
+	test("decodes rich desktop attachment export and share snapshots and errors", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+
+		await expect(
+			Effect.runPromise(
+				Schema.decodeUnknown(ImageAttachmentSnapshot)({
+					id: "image-1",
+					workspaceId,
+					sessionId,
+					source: "file",
+					fileName: "screen.png",
+					mimeType: "image/png",
+					sizeBytes: 12,
+					previewDataUrl: "data:image/png;base64,abcd",
+					createdAt: "2026-06-20T00:00:00.000Z",
+				}),
+			),
+		).resolves.toMatchObject({ id: "image-1", source: "file" });
+		await expect(
+			Effect.runPromise(
+				Schema.decodeUnknown(SessionExportSnapshot)({
+					artifactId: "artifact-1",
+					workspaceId,
+					sessionId,
+					format: "html",
+					outputPath: "/tmp/session.html",
+					createdAt: "2026-06-20T00:00:00.000Z",
+				}),
+			),
+		).resolves.toMatchObject({ artifactId: "artifact-1", format: "html" });
+		await expect(
+			Effect.runPromise(
+				Schema.decodeUnknown(SessionExportResultSnapshot)({
+					status: "exported",
+					artifact: {
+						artifactId: "artifact-1",
+						workspaceId,
+						sessionId,
+						format: "html",
+						outputPath: "/tmp/session.html",
+						createdAt: "2026-06-20T00:00:00.000Z",
+					},
+				}),
+			),
+		).resolves.toMatchObject({ status: "exported" });
+		await expect(
+			Effect.runPromise(
+				Schema.decodeUnknown(SessionExportResultSnapshot)({
+					status: "cancelled",
+					workspaceId,
+					sessionId,
+					format: "jsonl",
+				}),
+			),
+		).resolves.toMatchObject({ status: "cancelled" });
+		await expect(
+			Effect.runPromise(
+				Schema.decodeUnknown(SessionShareSnapshot)({
+					workspaceId,
+					sessionId,
+					gistUrl: "https://gist.github.com/user/abc123",
+					previewUrl: "https://pi.dev/session/#abc123",
+					createdAt: "2026-06-20T00:00:00.000Z",
+				}),
+			),
+		).resolves.toMatchObject({ gistUrl: "https://gist.github.com/user/abc123" });
+		await expect(
+			Effect.runPromise(
+				Schema.decodeUnknown(SessionShareSnapshot)({
+					workspaceId,
+					sessionId,
+					gistUrl: "http://gist.github.com/user/abc123",
+					previewUrl: "https://pi.dev/session/#abc123",
+					createdAt: "2026-06-20T00:00:00.000Z",
+				}),
+			),
+		).rejects.toThrow();
+		await expect(
+			Effect.runPromise(
+				Schema.decodeUnknown(SessionShareSnapshot)({
+					workspaceId,
+					sessionId,
+					gistUrl: "https://gist.github.com/user/abc123",
+					previewUrl: "javascript:alert(1)",
+					createdAt: "2026-06-20T00:00:00.000Z",
+				}),
+			),
+		).rejects.toThrow();
+		await expect(
+			decodeGuiError(new ImageAttachmentBlocked({ workspaceId, sessionId, message: "Images are blocked" })),
+		).resolves.toBeInstanceOf(ImageAttachmentBlocked);
+		await expect(
+			decodeGuiError(
+				new ImageAttachmentTooLarge({
+					workspaceId,
+					sessionId,
+					sizeBytes: 2,
+					maxBytes: 1,
+					message: "too large",
+				}),
+			),
+		).resolves.toBeInstanceOf(ImageAttachmentTooLarge);
+		await expect(
+			decodeGuiError(
+				new ImageAttachmentLimitExceeded({
+					workspaceId,
+					sessionId,
+					maxAttachments: 8,
+					message: "too many",
+				}),
+			),
+		).resolves.toBeInstanceOf(ImageAttachmentLimitExceeded);
 	});
 
 	test("decodes prompt commands with explicit running delivery modes", async () => {

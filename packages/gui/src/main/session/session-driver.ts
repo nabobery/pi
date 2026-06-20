@@ -1,10 +1,12 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent/runtime";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type {
 	ModelThinkingSnapshot,
 	QueueRestoreSnapshot,
 	QueueSnapshot,
 	ResourceInventorySnapshot,
 	SessionCompactionSnapshot,
+	SessionExportSnapshot,
 	SessionId,
 	SessionTreeSnapshot,
 	SlashCommandSnapshot,
@@ -48,10 +50,16 @@ export interface OpenRuntimeSessionRequest {
 export interface SendRuntimeMessageRequest {
 	message: string;
 	deliveryMode?: "steer" | "followUp";
+	images?: ImageContent[];
 }
 
 export interface SendRuntimeMessageResult {
 	completion: Promise<void>;
+}
+
+export interface ExportRuntimeSessionRequest {
+	format: "html" | "jsonl";
+	outputPath?: string;
 }
 
 export interface NavigateRuntimeTreeRequest {
@@ -68,6 +76,10 @@ export interface SessionDriver {
 	cancelTreeNavigation(handle: RuntimeSessionHandle): Promise<void>;
 	closeSession(handle: RuntimeSessionHandle): Promise<void>;
 	compact(handle: RuntimeSessionHandle, customInstructions: string | undefined): Promise<SessionCompactionSnapshot>;
+	exportSession(
+		handle: RuntimeSessionHandle,
+		request: ExportRuntimeSessionRequest,
+	): Promise<Omit<SessionExportSnapshot, "artifactId" | "createdAt">>;
 	getModelThinking(handle: RuntimeSessionHandle): Promise<ModelThinkingSnapshot>;
 	getQueue(handle: RuntimeSessionHandle): Promise<QueueSnapshot>;
 	getResourceInventory?(handle: RuntimeSessionHandle): Promise<ResourceInventorySnapshot>;

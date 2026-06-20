@@ -462,6 +462,119 @@ export class ExtensionUiRequestCancelled extends Schema.TaggedError<ExtensionUiR
 	},
 ) {}
 
+export class ImageAttachmentBlocked extends Schema.TaggedError<ImageAttachmentBlocked>()("ImageAttachmentBlocked", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	message: Schema.String,
+}) {}
+
+export class ImageAttachmentUnsupportedMime extends Schema.TaggedError<ImageAttachmentUnsupportedMime>()(
+	"ImageAttachmentUnsupportedMime",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		filePath: Schema.optional(Schema.String),
+		mimeType: Schema.optional(Schema.String),
+		message: Schema.String,
+	},
+) {}
+
+export class ImageAttachmentReadFailed extends Schema.TaggedError<ImageAttachmentReadFailed>()(
+	"ImageAttachmentReadFailed",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		filePath: Schema.optional(Schema.String),
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
+
+export class ImageAttachmentResizeFailed extends Schema.TaggedError<ImageAttachmentResizeFailed>()(
+	"ImageAttachmentResizeFailed",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		filePath: Schema.optional(Schema.String),
+		message: Schema.String,
+		cause: Schema.optional(Schema.String),
+	},
+) {}
+
+export class ImageAttachmentTooLarge extends Schema.TaggedError<ImageAttachmentTooLarge>()("ImageAttachmentTooLarge", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	filePath: Schema.optional(Schema.String),
+	sizeBytes: Schema.Number,
+	maxBytes: Schema.Number,
+	message: Schema.String,
+}) {}
+
+export class ImageAttachmentLimitExceeded extends Schema.TaggedError<ImageAttachmentLimitExceeded>()(
+	"ImageAttachmentLimitExceeded",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		maxAttachments: Schema.Number,
+		message: Schema.String,
+	},
+) {}
+
+export class ImageAttachmentNotFound extends Schema.TaggedError<ImageAttachmentNotFound>()("ImageAttachmentNotFound", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	attachmentId: Schema.String,
+	message: Schema.String,
+}) {}
+
+export class SessionExportUnavailable extends Schema.TaggedError<SessionExportUnavailable>()(
+	"SessionExportUnavailable",
+	{
+		workspaceId: Schema.String,
+		sessionId: Schema.String,
+		message: Schema.String,
+	},
+) {}
+
+export class SessionExportFailed extends Schema.TaggedError<SessionExportFailed>()("SessionExportFailed", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	format: Schema.optional(Schema.String),
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class SessionShareUnavailable extends Schema.TaggedError<SessionShareUnavailable>()("SessionShareUnavailable", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	message: Schema.String,
+}) {}
+
+export class SessionShareAuthFailed extends Schema.TaggedError<SessionShareAuthFailed>()("SessionShareAuthFailed", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class SessionShareFailed extends Schema.TaggedError<SessionShareFailed>()("SessionShareFailed", {
+	workspaceId: Schema.String,
+	sessionId: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
+export class ArtifactNotFound extends Schema.TaggedError<ArtifactNotFound>()("ArtifactNotFound", {
+	artifactId: Schema.String,
+	message: Schema.String,
+}) {}
+
+export class ArtifactOpenFailed extends Schema.TaggedError<ArtifactOpenFailed>()("ArtifactOpenFailed", {
+	artifactId: Schema.String,
+	message: Schema.String,
+	cause: Schema.optional(Schema.String),
+}) {}
+
 export const GuiError = Schema.Union(
 	InvalidRendererCommand,
 	UnauthorizedIpcSender,
@@ -523,6 +636,20 @@ export const GuiError = Schema.Union(
 	ExtensionUiSessionMismatch,
 	ExtensionUiResponseInvalid,
 	ExtensionUiRequestCancelled,
+	ImageAttachmentBlocked,
+	ImageAttachmentUnsupportedMime,
+	ImageAttachmentReadFailed,
+	ImageAttachmentResizeFailed,
+	ImageAttachmentTooLarge,
+	ImageAttachmentLimitExceeded,
+	ImageAttachmentNotFound,
+	SessionExportUnavailable,
+	SessionExportFailed,
+	SessionShareUnavailable,
+	SessionShareAuthFailed,
+	SessionShareFailed,
+	ArtifactNotFound,
+	ArtifactOpenFailed,
 );
 export type GuiError = Schema.Schema.Type<typeof GuiError>;
 

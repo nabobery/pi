@@ -11,6 +11,7 @@ import {
 	ExtensionUiLayer,
 	QueuePanel,
 	RuntimeControls,
+	SessionArtifactPanel,
 	SettingsTrustPanel,
 } from "./app-panels.tsx";
 import { loadBootstrapState, type LoadState } from "./bootstrap-loader.ts";
@@ -82,8 +83,13 @@ export function ReadyApp({
 	const draft = selectedKey ? (state.composerDrafts[selectedKey] ?? "") : "";
 	const modelThinking = selectedKey ? state.modelThinkingBySessionKey[selectedKey] : undefined;
 	const selectedQueue = selectedKey ? state.queuesBySessionKey[selectedKey] : undefined;
+	const selectedAttachments = selectedKey ? state.imageAttachmentsBySessionKey[selectedKey] : undefined;
+	const selectedExport = selectedKey ? state.exportsBySessionKey[selectedKey] : undefined;
+	const selectedShare = selectedKey ? state.sharesBySessionKey[selectedKey] : undefined;
+	const selectedArtifactState = selectedKey ? state.sessionArtifactStateBySessionKey[selectedKey] : undefined;
 	const extensionUi = selectedKey ? state.extensionUiBySessionKey[selectedKey] : undefined;
 	const settingsSummary = selectedWorkspace ? state.settingsSummaryByWorkspaceId[selectedWorkspace.id] : undefined;
+	const imagesBlocked = settingsSummary?.imageBlockImages ?? false;
 	const trustStatus = selectedWorkspace ? state.trustStatusByWorkspaceId[selectedWorkspace.id] : undefined;
 
 	useEffect(() => {
@@ -111,6 +117,12 @@ export function ReadyApp({
 		if (!trustStatus) void store.getTrustStatus(selectedWorkspace.id);
 	}, [selectedWorkspace, settingsSummary, store, trustStatus]);
 
+	useEffect(() => {
+		if (!selectedWorkspace || !selectedSession || !imagesBlocked) return;
+		if ((selectedAttachments?.attachments.length ?? 0) === 0) return;
+		void store.clearImageAttachments(selectedWorkspace.id, selectedSession.id);
+	}, [imagesBlocked, selectedAttachments, selectedSession, selectedWorkspace, store]);
+
 	function updateDraft(value: string): void {
 		if (!selectedWorkspace || !selectedSession) return;
 		store.setComposerDraft(selectedWorkspace.id, selectedSession.id, value);
@@ -122,9 +134,21 @@ export function ReadyApp({
 	async function sendDraft(deliveryMode?: "steer" | "followUp"): Promise<void> {
 		if (!selectedWorkspace || !selectedSession) return;
 		const message = draft.trim();
-		if (!message) return;
-		const accepted = await store.sendMessage(selectedWorkspace.id, selectedSession.id, message, deliveryMode);
-		if (accepted) store.setComposerDraft(selectedWorkspace.id, selectedSession.id, "");
+		const attachmentIds = imagesBlocked
+			? []
+			: (selectedAttachments?.attachments.map((attachment) => attachment.id) ?? []);
+		if (!message && attachmentIds.length === 0) return;
+		const accepted = await store.sendMessage(
+			selectedWorkspace.id,
+			selectedSession.id,
+			message,
+			deliveryMode,
+			attachmentIds,
+		);
+		if (accepted) {
+			store.setComposerDraft(selectedWorkspace.id, selectedSession.id, "");
+			void store.clearImageAttachments(selectedWorkspace.id, selectedSession.id);
+		}
 	}
 
 	return (
@@ -179,6 +203,21 @@ export function ReadyApp({
 						}
 					/>
 				) : null}
+				{selectedWorkspace && selectedSession ? (
+					<SessionArtifactPanel
+						exported={selectedExport}
+						operationState={selectedArtifactState}
+						shared={selectedShare}
+						onExport={(format) => void store.exportSession(selectedWorkspace.id, selectedSession.id, format)}
+						onShare={() => {
+							if (!window.confirm("Create a secret GitHub gist for this session?")) return;
+							void store.shareSession(selectedWorkspace.id, selectedSession.id);
+						}}
+						onOpenArtifact={(artifactId) => void store.openArtifact(artifactId)}
+						onRevealArtifact={(artifactId) => void store.revealArtifact(artifactId)}
+						onOpenShare={(artifactId) => void store.openExternalArtifact(artifactId)}
+					/>
+				) : null}
 				<MainPane session={selectedSession} timeline={selectedTimeline} />
 				{extensionUi ? <ExtensionUiInlineState extensionUi={extensionUi} /> : null}
 				<QueuePanel
@@ -190,12 +229,26 @@ export function ReadyApp({
 				/>
 				<Composer
 					appMode={loadState.appInfo.mode}
+					attachments={selectedAttachments}
 					draft={draft}
+					imagesBlocked={imagesBlocked}
 					onCancel={() => {
 						if (!selectedWorkspace || !selectedSession) return;
 						void store.cancelRun(selectedWorkspace.id, selectedSession.id);
 					}}
 					onDraftChange={updateDraft}
+					onPasteImage={() => {
+						if (!selectedWorkspace || !selectedSession) return;
+						void store.pasteImageFromClipboard(selectedWorkspace.id, selectedSession.id);
+					}}
+					onPickImages={() => {
+						if (!selectedWorkspace || !selectedSession) return;
+						void store.pickImages(selectedWorkspace.id, selectedSession.id);
+					}}
+					onRemoveImage={(attachmentId) => {
+						if (!selectedWorkspace || !selectedSession) return;
+						void store.removeImageAttachment(selectedWorkspace.id, selectedSession.id, attachmentId);
+					}}
 					onSend={(deliveryMode) => void sendDraft(deliveryMode)}
 					selectedSession={selectedSession}
 				/>

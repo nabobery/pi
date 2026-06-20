@@ -206,6 +206,66 @@ describe("createGuiCatalogStore", () => {
 		expect(store.getSnapshot().timelines[`${workspaceId}:${sessionId}`]).toBeUndefined();
 	});
 
+	test("tracks export and share operation state with typed command payloads", async () => {
+		const workspaceId = workspaceIdFromString("workspace-1");
+		const sessionId = sessionIdFromString("session-1");
+		const invoke = vi.fn(async (command) => {
+			if (command._tag === "session.export") {
+				return {
+					ok: true as const,
+					requestId: command.requestId,
+					data: {
+						status: "exported" as const,
+						artifact: {
+							artifactId: "artifact-1",
+							workspaceId,
+							sessionId,
+							format: "html" as const,
+							outputPath: "/tmp/session.html",
+							createdAt: "2026-06-20T00:00:00.000Z",
+						},
+					},
+				};
+			}
+			return {
+				ok: true as const,
+				requestId: command.requestId,
+				data: {
+					artifactId: "artifact-share",
+					workspaceId,
+					sessionId,
+					gistUrl: "https://gist.github.com/user/abc123",
+					previewUrl: "https://pi.dev/session/#abc123",
+					createdAt: "2026-06-20T00:00:00.000Z",
+				},
+			};
+		});
+		const store = createGuiCatalogStore(
+			{
+				invoke,
+				subscribe: () => () => undefined,
+			},
+			{ revision: catalogRevisionFromString("0"), workspaces: [] },
+		);
+
+		await store.exportSession(workspaceId, sessionId, "html");
+		await store.shareSession(workspaceId, sessionId);
+
+		expect(invoke.mock.calls[0][0]).toMatchObject({ _tag: "session.export", format: "html" });
+		expect(invoke.mock.calls[1][0]).toMatchObject({ _tag: "session.share", confirmed: true });
+		expect(store.getSnapshot().exportsBySessionKey[`${workspaceId}:${sessionId}`]).toMatchObject({
+			artifactId: "artifact-1",
+		});
+		expect(store.getSnapshot().sharesBySessionKey[`${workspaceId}:${sessionId}`]).toMatchObject({
+			artifactId: "artifact-share",
+		});
+		expect(store.getSnapshot().sessionArtifactStateBySessionKey[`${workspaceId}:${sessionId}`]).toEqual({
+			error: undefined,
+			exporting: false,
+			sharing: false,
+		});
+	});
+
 	test("stores transcript results by explicit workspace identity when session IDs collide", async () => {
 		const listeners: Array<(event: GuiEvent) => void> = [];
 		const workspaceA = workspaceIdFromString("workspace-a");

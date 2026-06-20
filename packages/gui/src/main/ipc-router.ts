@@ -1,8 +1,15 @@
-import { type App, dialog, type IpcMainInvokeEvent, ipcMain, shell, type WebContents } from "electron";
+import { type App, clipboard, dialog, type IpcMainInvokeEvent, ipcMain, shell, type WebContents } from "electron";
 import {
 	AppBootstrap,
 	AppError,
+	ArtifactOpen,
+	ArtifactOpenExternal,
+	ArtifactReveal,
 	CommandNotImplemented,
+	ComposerClearImageAttachments,
+	ComposerPasteImageFromClipboard,
+	ComposerPickImages,
+	ComposerRemoveImageAttachment,
 	ExtensionUiRespond,
 	ExtensionUiUpdateEditorText,
 	type GuiCommand,
@@ -40,6 +47,7 @@ import {
 	SessionClose,
 	SessionCatalogUpdated,
 	SessionCreate,
+	SessionExport,
 	SessionGetTranscript,
 	SessionGetSlashCommands,
 	SessionGetTree,
@@ -52,6 +60,7 @@ import {
 	SessionSetThinkingLevel,
 	SessionSetTreeEntryLabel,
 	SessionSelected,
+	SessionShare,
 	SessionUnarchive,
 	TrustGetStatus,
 	TrustSaveDecision,
@@ -71,10 +80,13 @@ import {
 	requestIdFromString,
 } from "../contracts/index.ts";
 import { PI_GUI_EVENT_CHANNEL, PI_GUI_INVOKE_CHANNEL } from "../shared/contracts.ts";
+import { ArtifactService } from "./artifacts/artifact-service.ts";
+import { ShareService } from "./artifacts/share-service.ts";
 import type { AppOriginPolicy } from "./app-origin-policy.ts";
 import { createAppInfo } from "./app-info.ts";
 import { isAllowedAppUrl } from "./app-origin-policy.ts";
 import { CatalogService } from "./catalog/catalog-service.ts";
+import { ImageAttachmentService } from "./composer/image-attachment-service.ts";
 import { ResourceBridgeService } from "./resources/resource-bridge-service.ts";
 import { SettingsBridgeService } from "./settings/settings-bridge-service.ts";
 import { ExtensionHostUiService } from "./session/extension-host-ui-service.ts";
@@ -96,11 +108,15 @@ export interface CreateGuiInvokeHandlerOptions {
 	catalogService?: CatalogService;
 	eventBus: RendererEventBus;
 	mode: string | undefined;
+	artifactService?: Pick<ArtifactService, "open" | "openExternal" | "reveal" | "trackExternal" | "trackFile">;
+	imageAttachmentService?: Pick<ImageAttachmentService, "clear" | "pasteImageFromClipboard" | "pickImages" | "remove">;
+	pickExportPath?: (format: "html" | "jsonl") => Promise<string | undefined>;
 	pickWorkspaceDirectory?: () => Promise<string | undefined>;
 	policy: AppOriginPolicy;
 	settingsBridgeService?: Pick<
 		SettingsBridgeService,
 		| "getEditorSnapshot"
+		| "getImageSettings"
 		| "getSummary"
 		| "getTrustStatus"
 		| "openSettingsFile"
@@ -124,6 +140,7 @@ export interface CreateGuiInvokeHandlerOptions {
 		| "setModel"
 		| "setThinkingLevel"
 		| "updateExtensionEditorText"
+		| "exportSession"
 	> &
 		Partial<
 			Pick<
@@ -139,6 +156,7 @@ export interface CreateGuiInvokeHandlerOptions {
 				| "setTreeEntryLabel"
 			>
 		>;
+	shareService?: Pick<ShareService, "share">;
 	slashCommandService?: Pick<SlashCommandService, "getCatalog">;
 }
 
@@ -208,6 +226,22 @@ export function registerGuiIpcHandlers(app: App, mode: string | undefined, polic
 			extensionHostUiService.createContext(workspaceId, sessionId),
 	});
 	const settingsBridgeService = new SettingsBridgeService({ catalogService, shell });
+	const artifactService = new ArtifactService({ shell });
+	const imageAttachmentService = new ImageAttachmentService({
+		getImageSettings: (workspaceId) => settingsBridgeService.getImageSettings(workspaceId),
+		pickImageFiles: async () => {
+			const result = await dialog.showOpenDialog({
+				filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp"] }],
+				properties: ["openFile", "multiSelections"],
+			});
+			return result.canceled ? undefined : result.filePaths;
+		},
+		readClipboardImage: async () => {
+			const image = clipboard.readImage();
+			if (image.isEmpty()) return undefined;
+			return { data: image.toPNG(), mimeType: "image/png", fileName: "clipboard.png" };
+		},
+	});
 	const driver: SessionDriver = shouldUseFakeSessionDriver()
 		? new FakeSessionDriver({ extensionHostUiService })
 		: new PiSdkSessionDriver({ runtimeSupervisor });
@@ -215,8 +249,11 @@ export function registerGuiIpcHandlers(app: App, mode: string | undefined, polic
 		catalogService,
 		driver,
 		eventBus,
+		artifactService,
 		extensionHostUiService,
+		imageAttachmentService,
 	});
+	const shareService = new ShareService({ trackExternal: (url) => artifactService.trackExternal(url) });
 	const resourceBridgeService = new ResourceBridgeService({
 		catalogService,
 		sessionSupervisor,
@@ -233,10 +270,20 @@ export function registerGuiIpcHandlers(app: App, mode: string | undefined, polic
 			const result = await dialog.showOpenDialog({ properties: ["openDirectory"] });
 			return result.canceled ? undefined : result.filePaths[0];
 		},
+		pickExportPath: async (format) => {
+			const result = await dialog.showSaveDialog({
+				defaultPath: `pi-session.${format}`,
+				filters: [{ name: format === "html" ? "HTML" : "JSONL", extensions: [format] }],
+			});
+			return result.canceled ? undefined : result.filePath;
+		},
 		policy,
+		artifactService,
+		imageAttachmentService,
 		resumeService,
 		resourceBridgeService,
 		settingsBridgeService,
+		shareService,
 		slashCommandService,
 		sessionSupervisor,
 	});
@@ -264,6 +311,14 @@ async function handleGuiCommand(
 	const catalogService = options.catalogService ?? new CatalogService();
 	const settingsBridgeService = options.settingsBridgeService ?? new SettingsBridgeService({ catalogService, shell });
 	const resourceBridgeService = options.resourceBridgeService ?? new ResourceBridgeService({ catalogService, shell });
+	const artifactService = options.artifactService ?? new ArtifactService({ shell });
+	const imageAttachmentService =
+		options.imageAttachmentService ??
+		new ImageAttachmentService({
+			getImageSettings: (workspaceId) => settingsBridgeService.getImageSettings(workspaceId),
+		});
+	const shareService =
+		options.shareService ?? new ShareService({ trackExternal: (url) => artifactService.trackExternal(url) });
 
 	if (command instanceof AppBootstrap) {
 		options.eventBus.publishReceipt(command.requestId, "app.bootstrap.accepted");
@@ -373,6 +428,30 @@ async function handleGuiCommand(
 			return { ok: true, requestId: command.requestId, data: tree };
 		}
 
+		if (command instanceof ComposerPickImages) {
+			const snapshot = await imageAttachmentService.pickImages(command.workspaceId, command.sessionId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: snapshot };
+		}
+
+		if (command instanceof ComposerPasteImageFromClipboard) {
+			const snapshot = await imageAttachmentService.pasteImageFromClipboard(command.workspaceId, command.sessionId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: snapshot };
+		}
+
+		if (command instanceof ComposerRemoveImageAttachment) {
+			const snapshot = imageAttachmentService.remove(command.workspaceId, command.sessionId, command.attachmentId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: snapshot };
+		}
+
+		if (command instanceof ComposerClearImageAttachments) {
+			const snapshot = imageAttachmentService.clear(command.workspaceId, command.sessionId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: snapshot };
+		}
+
 		if (command instanceof SessionNavigateTree && options.sessionSupervisor?.navigateTree) {
 			const result = await options.sessionSupervisor.navigateTree({
 				workspaceId: command.workspaceId,
@@ -469,7 +548,70 @@ async function handleGuiCommand(
 				sessionId: command.sessionId,
 				message: command.message,
 				...(command.deliveryMode ? { deliveryMode: command.deliveryMode } : {}),
+				...(command.attachmentIds ? { attachmentIds: command.attachmentIds } : {}),
 			});
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
+		if (command instanceof SessionExport && options.sessionSupervisor?.exportSession) {
+			const outputPath = command.outputPath ?? (await options.pickExportPath?.(command.format));
+			if (!outputPath) {
+				options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+				return {
+					ok: true,
+					requestId: command.requestId,
+					data: {
+						status: "cancelled",
+						workspaceId: command.workspaceId,
+						sessionId: command.sessionId,
+						format: command.format,
+					},
+				};
+			}
+			const snapshot = await options.sessionSupervisor.exportSession(
+				command.workspaceId,
+				command.sessionId,
+				command.format,
+				outputPath,
+			);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: { status: "exported", artifact: snapshot } };
+		}
+
+		if (command instanceof SessionShare && options.sessionSupervisor?.exportSession) {
+			const sessionSupervisor = options.sessionSupervisor;
+			const snapshot = await shareService.share({
+				workspaceId: command.workspaceId,
+				sessionId: command.sessionId,
+				exportHtml: async (outputPath) => {
+					const exported = await sessionSupervisor.exportSession(
+						command.workspaceId,
+						command.sessionId,
+						"html",
+						outputPath,
+					);
+					return exported.outputPath;
+				},
+			});
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: snapshot };
+		}
+
+		if (command instanceof ArtifactOpen) {
+			await artifactService.open(command.artifactId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
+		if (command instanceof ArtifactReveal) {
+			artifactService.reveal(command.artifactId);
+			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
+			return { ok: true, requestId: command.requestId, data: undefined };
+		}
+
+		if (command instanceof ArtifactOpenExternal) {
+			await artifactService.openExternal(command.artifactId);
 			options.eventBus.publishReceipt(command.requestId, `${command._tag}.completed`);
 			return { ok: true, requestId: command.requestId, data: undefined };
 		}
